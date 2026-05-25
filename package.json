@@ -1,8 +1,8 @@
 {
   "name": "quellqa-audio",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "main": "main.js",
-  "description": "Quellqa // opium",
+  "description": "QUELLQA",
   "type": "commonjs",
   "scripts": {
     "dev": "vite",
@@ -27,7 +27,7 @@
   },
   "build": {
     "appId": "com.quellqa.audio",
-    "productName": "QuellqaAudio",
+    "productName": "QUELLQAAUDIO",
     "files": [
       "dist-web/**/*",
       "main.js",
