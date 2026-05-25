@@ -3,15 +3,16 @@ const path = require('path');
 const DiscordRPC = require('discord-rpc');
 
 let win;
-// Your specific Quellqa application client ID
 const clientId = '1508392537914871838'; 
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1000,
-    height: 650,
+    width: 1040,
+    height: 680,
     title: "Quellqa Audio",
-    autoHideMenuBar: true,
+    frame: false, // CRITICAL: Drops standard OS window frame for custom titlebar
+    resizable: true,
+    backgroundColor: '#fff5f7',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -21,30 +22,36 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'dist-web/index.html'));
 }
 
+// IPC Window Controls
+ipcMain.on('window-control', (event, action) => {
+  if (!win) return;
+  if (action === 'close') win.close();
+  if (action === 'minimize') win.minimize();
+});
+
 const rpc = new DiscordRPC.Client({ transport: 'ipc' });
 
 function setInitialPresence() {
   if (!rpc) return;
   rpc.setActivity({
-    details: 'Browsing',
+    details: 'dis bitch left me open',
     state: 'Idle',
     largeImageKey: 'quellqa_logo',
-    largeImageText: 'Quellqa Audio',
+    largeImageText: 'Quellqa Audio v1.3.0',
     instance: false,
   }).catch(console.error);
 }
 
 ipcMain.on('update-rpc', (event, track) => {
   if (!rpc) return;
-  
   if (track) {
     rpc.setActivity({
-      details: `Listening to ${track.title}`,
+      details: `🔊 ${track.title}`,
       state: `by ${track.artist}`,
       largeImageKey: 'quellqa_logo',
-      largeImageText: `Album: ${track.album}`,
+      largeImageText: `EQ: Bass Boosted`,
       smallImageKey: track.isPlaying ? 'play_icon' : 'pause_icon',
-      smallImageText: track.isPlaying ? 'Blasting Ears' : 'Paused',
+      smallImageText: track.isPlaying ? 'Cranking Decibels' : 'Paused',
       instance: false,
     }).catch(console.error);
   } else {
@@ -52,14 +59,8 @@ ipcMain.on('update-rpc', (event, track) => {
   }
 });
 
-rpc.on('ready', () => {
-  setInitialPresence();
-});
-
+rpc.on('ready', () => { setInitialPresence(); });
 rpc.login({ clientId }).catch(console.error);
 
 app.whenReady().then(createWindow);
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
