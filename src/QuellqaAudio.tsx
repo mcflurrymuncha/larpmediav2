@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Heart, Sparkles, FolderPlus, Disc, Volume2, X, Minus } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Folder, X, Minus } from 'lucide-react';
 import * as musicMetadata from 'music-metadata-browser';
 
 interface Track {
@@ -13,17 +13,17 @@ interface Track {
 }
 
 export default function QuellqaAudio() {
-  const version = "v1.3.0-Boutique";
+  const version = "v2 // opium";
   
   const [playlist, setPlaylist] = useState<Track[]>([]);
   const [currentIdx, setCurrentIdx] = useState<number>(-1);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   
-  // Custom tuned aggressive ear-shattering DSP parameters
-  const [preamp, setPreamp] = useState<number>(-2);
-  const [bass, setBass] = useState<number>(8); // Pure heavy analog rumble
-  const [mid, setMid] = useState<number>(-3);
-  const [treble, setTreble] = useState<number>(5); // Sharp presence
+  // Cleaned baseline defaults optimized for extreme structural sub-kick response
+  const [preamp, setPreamp] = useState<number>(0);
+  const [bass, setBass] = useState<number>(10);   // Brutal, heavy floor signature
+  const [mid, setMid] = useState<number>(-4);    // Cleaned mid scoop
+  const [treble, setTreble] = useState<number>(3); // Sharp metal accents
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -36,23 +36,19 @@ export default function QuellqaAudio() {
 
   useEffect(() => {
     if (currentIdx !== -1 && playlist[currentIdx]) {
-      document.title = `🌸 ${playlist[currentIdx].title} — Quellqa`;
+      document.title = playlist[currentIdx].title.toLowerCase();
     } else {
-      document.title = `Quellqa Audio`;
+      document.title = "quellqa";
     }
   }, [currentIdx, playlist]);
 
-  const closeWindow = () => {
-    try { const { ipcRenderer } = window.require('electron'); ipcRenderer.send('window-control', 'close'); } catch(e){}
-  };
-  const minimizeWindow = () => {
-    try { const { ipcRenderer } = window.require('electron'); ipcRenderer.send('window-control', 'minimize'); } catch(e){}
+  const runWindowAction = (action: 'close' | 'minimize') => {
+    try { window.require('electron').ipcRenderer.send('window-control', action); } catch(e){}
   };
 
   const initAudioGraph = () => {
     if (!audioRef.current || audioCtxRef.current) return;
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new AudioContextClass();
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioCtxRef.current = ctx;
 
     const source = ctx.createMediaElementSource(audioRef.current);
@@ -64,14 +60,14 @@ export default function QuellqaAudio() {
     const trebleNode = ctx.createBiquadFilter();
 
     bassNode.type = 'lowshelf';
-    bassNode.frequency.value = 160;
+    bassNode.frequency.value = 140; // Dropped frequency wall for hard sub kicks
 
     midNode.type = 'peaking';
-    midNode.Q.value = 1.4;
-    midNode.frequency.value = 1100;
+    midNode.Q.value = 1.5;
+    midNode.frequency.value = 1000;
 
     trebleNode.type = 'highshelf';
-    trebleNode.frequency.value = 4200;
+    trebleNode.frequency.value = 5000;
 
     source.connect(preampNode);
     preampNode.connect(bassNode);
@@ -88,10 +84,7 @@ export default function QuellqaAudio() {
   };
 
   const updateDspValues = () => {
-    if (preampNodeRef.current) {
-      const gainLinear = Math.pow(10, preamp / 20);
-      preampNodeRef.current.gain.setValueAtTime(gainLinear, audioCtxRef.current?.currentTime || 0);
-    }
+    if (preampNodeRef.current) preampNodeRef.current.gain.setValueAtTime(Math.pow(10, preamp / 20), audioCtxRef.current?.currentTime || 0);
     if (bassNodeRef.current) bassNodeRef.current.gain.setValueAtTime(bass, audioCtxRef.current?.currentTime || 0);
     if (midNodeRef.current) midNodeRef.current.gain.setValueAtTime(mid, audioCtxRef.current?.currentTime || 0);
     if (trebleNodeRef.current) trebleNodeRef.current.gain.setValueAtTime(treble, audioCtxRef.current?.currentTime || 0);
@@ -113,14 +106,13 @@ export default function QuellqaAudio() {
           let coverArtUrl = "";
           if (common.picture && common.picture.length > 0) {
             const pic = common.picture[0];
-            const base64String = btoa(new Uint8Array(pic.data).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-            coverArtUrl = `data:${pic.format};base64,${base64String}`;
+            coverArtUrl = `data:${pic.format};base64,${btoa(new Uint8Array(pic.data).reduce((d, b) => d + String.fromCharCode(b), ''))}`;
           }
           loadedTracks.push({
             id: i,
             title: common.title || file.name.replace(/\.[^/.]+$/, ""),
-            artist: common.artist || "Unknown Cutie",
-            album: common.album || "Single Piece",
+            artist: common.artist || "UNKNOWN ARTIST",
+            album: common.album || "UNKNOWN",
             trackNo: common.track.no || i + 1,
             url: URL.createObjectURL(file),
             coverArt: coverArtUrl
@@ -129,8 +121,8 @@ export default function QuellqaAudio() {
           loadedTracks.push({
             id: i,
             title: file.name.replace(/\.[^/.]+$/, ""),
-            artist: "Unknown Cutie",
-            album: "Single Piece",
+            artist: "UNKNOWN ARTIST",
+            album: "UNKNOWN",
             trackNo: i + 1,
             url: URL.createObjectURL(file),
             coverArt: ""
@@ -149,10 +141,7 @@ export default function QuellqaAudio() {
     if (audioCtxRef.current?.state === 'suspended') { audioCtxRef.current.resume(); } else { initAudioGraph(); }
 
     const track = playlist[idx];
-    try {
-      const { ipcRenderer } = window.require('electron');
-      ipcRenderer.send('update-rpc', { title: track.title, artist: track.artist, album: track.album, isPlaying: true });
-    } catch (e) {}
+    try { window.require('electron').ipcRenderer.send('update-rpc', { title: track.title, artist: track.artist, album: track.album, isPlaying: true }); } catch (e) {}
 
     setTimeout(() => {
       if (audioRef.current) {
@@ -166,166 +155,94 @@ export default function QuellqaAudio() {
     if (playlist.length === 0) return;
     if (currentIdx === -1) { startTrackPipeline(0); return; }
     const track = playlist[currentIdx];
-    let nextPlayState = !isPlaying;
-
     if (isPlaying) { audioRef.current?.pause(); setIsPlaying(false); }
     else { audioRef.current?.play(); setIsPlaying(true); }
-
-    try {
-      const { ipcRenderer } = window.require('electron');
-      ipcRenderer.send('update-rpc', { title: track.title, artist: track.artist, album: track.album, isPlaying: nextPlayState });
-    } catch (e) {}
+    try { window.require('electron').ipcRenderer.send('update-rpc', { title: track.title, artist: track.artist, album: track.album, isPlaying: !isPlaying }); } catch (e) {}
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#fffcfd] text-[#2d1e30] overflow-hidden antialiased">
+    <div className="flex flex-col h-screen bg-black text-white selection:bg-[#222222] tracking-tight font-mono text-xs">
       <audio ref={audioRef} onEnded={() => { if (currentIdx < playlist.length - 1) startTrackPipeline(currentIdx + 1); }} crossOrigin="anonymous" />
 
-      {/* 🎀 CUSTOM HIGH-END DESIGNER TITLEBAR */}
-      <div className="h-10 bg-[#ffaec1] border-b-2 border-[#ff9cb4] flex items-center justify-between px-4 titlebar-drag select-none shrink-0 z-50">
-        {/* Mac-style Window Dot Actions */}
-        <div className="flex items-center gap-2 titlebar-nodrag">
-          <button onClick={closeWindow} className="w-3.5 h-3.5 rounded-full bg-[#ff5f56] hover:bg-[#ff4a40] flex items-center justify-center transition group border border-black/10">
-            <X size={8} className="text-black/40 opacity-0 group-hover:opacity-100 transition" />
-          </button>
-          <button onClick={minimizeWindow} className="w-3.5 h-3.5 rounded-full bg-[#ffbd2e] hover:bg-[#ffac1c] flex items-center justify-center transition group border border-black/10">
-            <Minus size={8} className="text-black/40 opacity-0 group-hover:opacity-100 transition" />
-          </button>
-          <div className="w-3.5 h-3.5 rounded-full bg-[#27c93f] opacity-40 border border-black/10" />
+      {/* STRIPPED LINEAR TITLEBAR */}
+      <div className="h-8 bg-black border-b border-[#111111] flex items-center justify-between px-3 titlebar-drag shrink-0 z-50">
+        <div className="flex items-center gap-1.5 titlebar-nodrag">
+          <button onClick={() => runWindowAction('close')} className="w-2.5 h-2.5 bg-[#222222] hover:bg-red-900 transition" />
+          <button onClick={() => runWindowAction('minimize')} className="w-2.5 h-2.5 bg-[#222222] hover:bg-zinc-700 transition" />
         </div>
-
-        {/* Dynamic Center Engine Title badge */}
-        <div className="text-[11px] font-black tracking-widest text-[#4a2e37] uppercase bg-white/40 px-4 py-0.5 rounded-full border border-white/40">
-          {currentIdx !== -1 ? `🍭 playing: ${playlist[currentIdx].title}` : '✨ QUELLQA DECK DEVIATION ✨'}
-        </div>
-
-        <div className="text-[10px] font-mono font-bold text-[#6e4651] pr-2">
-          {version}
-        </div>
+        <div className="text-[10px] text-[#444444] tracking-[0.2em] font-bold uppercase">{version}</div>
+        <div className="w-10" />
       </div>
 
-      {/* MAIN CONTENT SPLIT LAYER */}
+      {/* CORE FRAME LAYOUT */}
       <div className="flex flex-1 overflow-hidden">
         
-        {/* 🎛️ ASYMMETRICAL BOUTIQUE AUDIO ENGINE PANEL */}
-        <div className="w-80 bg-[#fff5f7] flex flex-col py-6 px-5 border-r-2 border-[#ffdae0] justify-between">
-          
-          {/* Header branding block */}
+        {/* LINEAR EQUALIZER COCKPIT */}
+        <div className="w-64 bg-black flex flex-col p-4 border-r border-[#111111] justify-between">
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[#a88691] bg-[#ffeaee] px-2 py-0.5 rounded-md">Boutique Hardware</span>
-              <Heart size={14} className="text-[#ff4d79]" fill="currentColor" />
-            </div>
-            <h2 className="text-2xl font-black tracking-tighter text-[#3a1d28] leading-none mb-1">Analog EQ</h2>
-            <p className="text-[11px] text-[#91757f] font-medium leading-tight">High-precision IIR filters mapped to hardware constraints.</p>
-          </div>
-
-          {/* 3-Band Equalizer Deck Configuration */}
-          <div className="my-auto bg-white rounded-3xl p-5 border-2 border-[#ffdae0] shadow-[0_8px_24px_rgba(255,218,224,0.3)] flex justify-between items-stretch h-56">
-            {/* Bass slider assembly */}
-            <div className="flex flex-col items-center justify-between">
-              <span className="text-[10px] font-mono font-bold text-[#ff4d79] bg-[#fff0f3] w-9 text-center py-0.5 rounded-md border border-[#ffcad4]">{bass > 0 ? `+${bass}` : bass}</span>
-              <div className="h-36 py-2 flex justify-center items-center">
-                <input 
-                  type="range" min="-12" max="12" step="0.5" value={bass} orient="vertical"
-                  onChange={(e) => setBass(parseFloat(e.target.value))}
-                  className="kawaii-slider kawaii-slider-vertical"
-                />
+            <div className="text-[10px] tracking-widest text-[#444444] font-bold mb-6">DB_DECK_PARAM</div>
+            
+            {/* Minimalist Vertical Engine Arrays */}
+            <div className="bg-[#050505] border border-[#111111] p-4 flex justify-between items-stretch h-52">
+              <div className="flex flex-col items-center justify-between w-1/3">
+                <span className="text-[9px] text-[#666666] font-bold">{bass > 0 ? `+${bass}` : bass}</span>
+                <input type="range" min="-12" max="12" step="0.5" value={bass} orient="vertical" onChange={(e) => setBass(parseFloat(e.target.value))} className="op-slider op-slider-vertical" />
+                <span className="text-[9px] text-[#444444] font-bold tracking-tighter">BASS</span>
               </div>
-              <span className="text-[10px] font-black tracking-tight text-[#ff4d79] uppercase">Sub-Bass</span>
-            </div>
-
-            {/* Mids slider assembly */}
-            <div className="flex flex-col items-center justify-between">
-              <span className="text-[10px] font-mono font-bold text-[#ff8736] bg-[#fff5ee] w-9 text-center py-0.5 rounded-md border border-[#ffe0cc]">{mid > 0 ? `+${mid}` : mid}</span>
-              <div className="h-36 py-2 flex justify-center items-center">
-                <input 
-                  type="range" min="-12" max="12" step="0.5" value={mid} orient="vertical"
-                  onChange={(e) => setMid(parseFloat(e.target.value))}
-                  className="kawaii-slider kawaii-slider-vertical accent-[#ff8736]"
-                />
+              <div className="flex flex-col items-center justify-between w-1/3">
+                <span className="text-[9px] text-[#666666] font-bold">{mid > 0 ? `+${mid}` : mid}</span>
+                <input type="range" min="-12" max="12" step="0.5" value={mid} orient="vertical" onChange={(e) => setMid(parseFloat(e.target.value))} className="op-slider op-slider-vertical" />
+                <span className="text-[9px] text-[#444444] font-bold tracking-tighter">MID</span>
               </div>
-              <span className="text-[10px] font-black tracking-tight text-[#ff8736] uppercase">Mids</span>
-            </div>
-
-            {/* Treble slider assembly */}
-            <div className="flex flex-col items-center justify-between">
-              <span className="text-[10px] font-mono font-bold text-[#32c499] bg-[#eefffb] w-9 text-center py-0.5 rounded-md border border-[#ccfff4]">{treble > 0 ? `+${treble}` : treble}</span>
-              <div className="h-36 py-2 flex justify-center items-center">
-                <input 
-                  type="range" min="-12" max="12" step="0.5" value={treble} orient="vertical"
-                  onChange={(e) => setTreble(parseFloat(e.target.value))}
-                  className="kawaii-slider kawaii-slider-vertical accent-[#32c499]"
-                />
+              <div className="flex flex-col items-center justify-between w-1/3">
+                <span className="text-[9px] text-[#666666] font-bold">{treble > 0 ? `+${treble}` : treble}</span>
+                <input type="range" min="-12" max="12" step="0.5" value={treble} orient="vertical" onChange={(e) => setTreble(parseFloat(e.target.value))} className="op-slider op-slider-vertical" />
+                <span className="text-[9px] text-[#444444] font-bold tracking-tighter">TREB</span>
               </div>
-              <span className="text-[10px] font-black tracking-tight text-[#32c499] uppercase">Presence</span>
             </div>
           </div>
 
-          {/* Master Pre-amp safety floor controller */}
-          <div className="bg-white rounded-2xl p-3 border border-[#ffdae0]">
-            <div className="flex justify-between text-[10px] font-black text-[#695058] mb-1.5 uppercase tracking-wide">
-              <div className="flex items-center gap-1"><Volume2 size={12}/><span>System Headroom</span></div>
-              <span className="font-mono">{preamp} dB</span>
+          {/* Core Master Attenuation Slider */}
+          <div className="bg-[#050505] border border-[#111111] p-3">
+            <div className="flex justify-between text-[9px] text-[#555555] mb-2 font-bold tracking-wider">
+              <span>PRE_AMP</span>
+              <span>{preamp} DB</span>
             </div>
-            <input 
-              type="range" min="-12" max="12" step="0.5" value={preamp} 
-              onChange={(e) => setPreamp(parseFloat(e.target.value))}
-              className="w-full h-2 rounded-full appearance-none bg-[#fff0f2] cursor-pointer accent-[#ff4d79] kawaii-slider"
-            />
+            <input type="range" min="-12" max="12" step="0.5" value={preamp} onChange={(e) => setPreamp(parseFloat(e.target.value))} className="w-full h-1 appearance-none bg-[#111111] cursor-pointer op-slider" />
           </div>
         </div>
 
-        {/* 🎵 ALBUM LOADER VIEWPORT & TRACKLIST COMPARTMENT */}
-        <div className="flex-1 flex flex-col p-6 bg-[#fffcfd]">
-          
-          {/* Action Trigger Row */}
-          <div className="flex justify-between items-center mb-5">
-            <div>
-              <h3 className="text-xs font-black tracking-wider uppercase text-[#a3808c]">Acoustic Library</h3>
-              <p className="text-lg font-black text-[#2e151f]">Loaded Tracks</p>
-            </div>
-            <label className="flex items-center gap-2 bg-[#1f1522] hover:bg-[#322436] text-white font-bold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition shadow-md border-b-2 border-black">
-              <FolderPlus size={14} className="text-[#ff9cb4]" />
-              <span>Import Audio Album</span>
+        {/* TRACK CONSOLE WINDOW */}
+        <div className="flex-1 flex flex-col p-4 bg-black">
+          <div className="flex justify-between items-center mb-4">
+            <div className="text-[10px] text-[#444444] font-bold tracking-widest">DIR_LOADER</div>
+            <label className="flex items-center gap-1.5 border border-[#222222] hover:border-[#444444] text-white font-bold text-[10px] px-3 py-1.5 cursor-pointer transition">
+              <Folder size={12} />
+              <span>IMPORT</span>
               <input type="file" multiple accept="audio/*" onChange={handleFolderImport} className="hidden" />
             </label>
           </div>
 
-          {/* Asymmetric Offset Track Window */}
-          <div className="flex-1 bg-white rounded-[32px] border-2 border-[#ffdae0] p-4 overflow-y-auto shadow-sm">
+          <div className="flex-1 border border-[#111111] overflow-y-auto bg-[#020202]">
             {playlist.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-[#9c7d87] gap-3">
-                <div className="w-12 h-12 bg-[#fff0f3] border border-[#ffcad4] rounded-2xl flex items-center justify-center text-[#ff4d79]">
-                  <Sparkles size={20} />
-                </div>
-                <div className="text-center">
-                  <p className="text-xs font-black uppercase tracking-wider text-[#ff4d79] mb-0.5">Player is Empty</p>
-                  <p className="text-[11px] font-medium text-gray-400">Load local directories to populate audio pipelines.</p>
-                </div>
+              <div className="h-full flex items-center justify-center text-[#333333] font-bold tracking-widest text-[10px]">
+                NO_AUDIO_MOUNTED
               </div>
             ) : (
-              <div className="space-y-1">
+              <div className="divide-y divide-[#0a0a0a]">
                 {playlist.map((track, idx) => (
                   <div 
                     key={track.id}
                     onClick={() => startTrackPipeline(idx)}
-                    className={`flex items-center justify-between p-3 rounded-2xl cursor-pointer transition group border ${
-                      currentIdx === idx 
-                        ? 'bg-[#ffebf0] border-[#ffb8c7] text-[#ff4d79]' 
-                        : 'bg-transparent border-transparent hover:bg-[#fff2f4] text-[#422e37]'
+                    className={`flex items-center justify-between p-2.5 cursor-pointer transition text-[11px] ${
+                      currentIdx === idx ? 'bg-[#111111] text-white font-bold' : 'hover:bg-[#080808] text-[#777777]'
                     }`}
                   >
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className={`w-7 h-7 rounded-lg text-xs font-black flex items-center justify-center ${currentIdx === idx ? 'bg-[#ff4d79] text-white' : 'bg-[#fff0f2] text-[#ff809d]'}`}>
-                        {currentIdx === idx && isPlaying ? "⚡" : String(track.trackNo).padStart(2, '0')}
-                      </div>
-                      <div className="overflow-hidden">
-                        <div className="font-bold truncate text-xs">{track.title}</div>
-                        <div className="text-[10px] text-gray-400 font-bold truncate group-hover:text-[#ff8ca4]">{track.artist}</div>
-                      </div>
+                    <div className="flex items-center gap-3 truncate">
+                      <span className="w-4 text-[#333333] font-mono">{String(track.trackNo).padStart(2, '0')}</span>
+                      <span className="truncate uppercase tracking-tight">{track.title}</span>
                     </div>
-                    <div className="text-[10px] font-bold text-gray-400 opacity-60 max-w-[120px] truncate pr-2">{track.album}</div>
+                    <span className="text-[10px] text-[#333333] truncate pl-4 uppercase tracking-tighter w-40 text-right">{track.artist}</span>
                   </div>
                 ))}
               </div>
@@ -334,70 +251,36 @@ export default function QuellqaAudio() {
         </div>
       </div>
 
-      {/* 🌸 LOWER CONSOLE PLAYER DECK STRIP */}
-      <div className="h-24 bg-white border-t-2 border-[#ffdae0] flex items-center justify-between px-6 shrink-0 shadow-inner z-10">
-        
-        {/* Vinyl artwork spinner card */}
+      {/* SYSTEM OPERATIONS STRIP (FOOTER) */}
+      <div className="h-16 bg-black border-t border-[#111111] flex items-center justify-between px-4 shrink-0 z-10">
+        {/* Dynamic Context Readout */}
         <div className="w-1/3 flex items-center gap-3">
           {currentIdx !== -1 ? (
-            <>
-              <div className="relative shrink-0">
-                {playlist[currentIdx]?.coverArt ? (
-                  <img 
-                    src={playlist[currentIdx].coverArt} 
-                    alt="art" 
-                    className={`w-14 h-14 rounded-2xl object-cover border border-[#ffb3c1] shadow-sm ${isPlaying ? 'animate-spin [animation-duration:10s]' : ''}`} 
-                  />
-                ) : (
-                  <div className="w-14 h-14 bg-[#fff0f2] border border-[#ffcad4] rounded-2xl flex items-center justify-center text-[#ff4d79]">
-                    <Disc size={20} className={isPlaying ? 'animate-spin [animation-duration:5s]' : ''} />
-                  </div>
-                )}
-                <div className="absolute inset-0 m-auto w-3 h-3 bg-white border border-[#ffb3c1] rounded-full shadow-inner" />
-              </div>
-              <div className="overflow-hidden leading-tight">
-                <div className="text-xs font-black text-[#2e1b23] truncate">{playlist[currentIdx]?.title}</div>
-                <div className="text-[11px] text-[#ff4d79] font-black truncate">{playlist[currentIdx]?.artist}</div>
-                <div className="text-[9px] font-mono font-bold text-gray-400 tracking-wider uppercase truncate mt-0.5">💿 {playlist[currentIdx]?.album}</div>
-              </div>
-            </>
-          ) : (
-            <div className="text-[11px] font-bold text-[#b8a0aa] tracking-wide flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[#ffccd5] animate-ping" />
-              <span>Awaiting input sequence...</span>
+            <div className="leading-tight truncate uppercase">
+              <div className="text-[11px] font-bold tracking-tight text-white truncate">{playlist[currentIdx]?.title}</div>
+              <div className="text-[9px] text-[#555555] font-bold truncate mt-0.5">{playlist[currentIdx]?.artist}</div>
             </div>
+          ) : (
+            <span className="text-[10px] text-[#222222] font-bold tracking-widest">DECK_STANDBY</span>
           )}
         </div>
 
-        {/* Center operational navigation deck */}
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => { if (currentIdx > 0) startTrackPipeline(currentIdx - 1); }} 
-            disabled={currentIdx <= 0} 
-            className="w-9 h-9 rounded-xl border border-[#ffdae0] flex items-center justify-center text-[#ff9cb2] hover:text-[#ff4d79] hover:bg-[#fff2f5] disabled:opacity-20 disabled:hover:bg-transparent transition active:scale-90"
-          >
-            <SkipBack size={16} fill="currentColor" />
+        {/* Structural Navigation Buttons */}
+        <div className="flex items-center gap-1">
+          <button onClick={() => { if (currentIdx > 0) startTrackPipeline(currentIdx - 1); }} disabled={currentIdx <= 0} className="w-8 h-8 border border-[#111111] hover:border-[#222222] flex items-center justify-center text-[#555555] hover:text-white disabled:opacity-10 transition">
+            <SkipBack size={12} />
           </button>
-          
-          <button 
-            onClick={togglePlayState}
-            className="w-12 h-12 rounded-2xl bg-[#ff4d79] hover:bg-[#ff2458] text-white flex items-center justify-center shadow-[0_4px_12px_rgba(255,77,121,0.4)] transition transform hover:scale-105 active:scale-95 border-b-2 border-[#b81d43]"
-          >
-            {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+          <button onClick={togglePlayState} className="w-10 h-8 border border-[#222222] hover:border-[#444444] flex items-center justify-center text-white transition">
+            {isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}
           </button>
-
-          <button 
-            onClick={() => { if (currentIdx < playlist.length - 1) startTrackPipeline(currentIdx + 1); }} 
-            disabled={currentIdx === -1 || currentIdx >= playlist.length - 1} 
-            className="w-9 h-9 rounded-xl border border-[#ffdae0] flex items-center justify-center text-[#ff9cb2] hover:text-[#ff4d79] hover:bg-[#fff2f5] disabled:opacity-20 disabled:hover:bg-transparent transition active:scale-90"
-          >
-            <SkipForward size={16} fill="currentColor" />
+          <button onClick={() => { if (currentIdx < playlist.length - 1) startTrackPipeline(currentIdx + 1); }} disabled={currentIdx === -1 || currentIdx >= playlist.length - 1} className="w-8 h-8 border border-[#111111] hover:border-[#222222] flex items-center justify-center text-[#555555] hover:text-white disabled:opacity-10 transition">
+            <SkipForward size={12} />
           </button>
         </div>
 
-        {/* Status loop counter right flank */}
-        <div className="w-1/3 flex justify-end text-[10px] font-mono text-[#a38c94] tracking-wider uppercase font-bold">
-          {playlist.length > 0 ? `Track [ ${currentIdx + 1} / ${playlist.length} ]` : 'Empty Rack'}
+        {/* Matrix Position Metadata Readout */}
+        <div className="w-1/3 flex justify-end text-[10px] text-[#333333] font-bold tracking-wider">
+          {playlist.length > 0 ? `POS // [${currentIdx + 1}.${playlist.length}]` : 'IDX_NULL'}
         </div>
       </div>
     </div>
