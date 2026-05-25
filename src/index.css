@@ -8,25 +8,48 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: #fff0f5; /* Lavender Blush base */
-  font-family: 'Comic Sans MS', 'Chillround', 'Nunito', sans-serif;
+  background-color: #fff9fa;
+  font-family: 'Inter', 'Nunito', system-ui, sans-serif;
+  user-select: none;
 }
 
-/* Custom Soft-Kawaii Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
+/* Electron Window Drag Rules */
+.titlebar-drag {
+  -webkit-app-region: drag;
 }
-::-webkit-scrollbar-track {
-  background: #fff0f5;
-}
-::-webkit-scrollbar-thumb {
-  background: #ffb7c5;
-  border-radius: 10px;
+.titlebar-nodrag {
+  -webkit-app-region: no-drag;
 }
 
-/* Fix vertical range sliders for Electron canvas */
-input[type="range"][orient="vertical"] {
+/* Custom Soft-Touch EQ Sliders */
+input[type="range"].kawaii-slider {
+  appearance: none;
+  background: #ffe3e8;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+input[type="range"].kawaii-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ff4d79;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(255, 77, 121, 0.3);
+  transition: transform 0.1s ease;
+}
+input[type="range"].kawaii-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+/* Vertical slider styling framework overrides */
+input[type="range"].kawaii-slider-vertical {
   appearance: slider-vertical;
-  width: 12px;
-  height: 150px !important;
+  width: 14px;
+  height: 160px !important;
 }
+
+/* Custom smooth list scroll tracks */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ffdae0; border-radius: 99px; }
