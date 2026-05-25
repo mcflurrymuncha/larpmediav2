@@ -20,7 +20,8 @@ jobs:
         run: npm run build
 
       - name: Package Into Desktop App
-        run: npx electron-builder --windows --config '{"win": {"icon": "icon.ico"}}'
+        run: |
+          npx electron-builder --win portable --config "{\"win\": {\"icon\": \"icon.ico\"}}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
