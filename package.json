@@ -1,6 +1,6 @@
 {
   "name": "quellqa-audio",
-  "version": "1.0.1",
+  "version": "1.3.0",
   "main": "main.js",
   "description": "Quellqa: Cutest Audio Player with Deadly EQ",
   "type": "commonjs",
