@@ -1,6 +1,6 @@
 {
   "name": "quellqa-audio",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "main": "main.js",
   "description": "QUELLQA",
   "type": "commonjs",
@@ -14,7 +14,8 @@
     "music-metadata-browser": "^2.5.10",
     "lucide-react": "^0.300.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "ytdl-core": "^4.11.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
