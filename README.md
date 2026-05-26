@@ -1,8 +1,6 @@
-# quellqa // v2
+# QUELLQA // V5
 
 A desktop audio player engineered for minimal footprint performance. Built with Electron, React, and Tailwind CSS.
-
-Album Art is in BETA. it does not fully work 😭
 
 ---
 
