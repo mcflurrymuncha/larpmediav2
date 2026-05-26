@@ -170,7 +170,7 @@ export default function QuellqaAudio() {
     
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const nameLower = file.name.toLowerCase(;
+      const nameLower = file.name.toLowerCase();
       if (nameLower.endsWith('.mp3') || nameLower.endsWith('.wav') || nameLower.endsWith('.m4a') || nameLower.endsWith('.flac')) {
         
         const cleanFilename = file.name.replace(/\.[^/.]+$/, "");
