@@ -9,7 +9,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 980,
     height: 600,
-    title: "QUELLQA",
+    title: "QUELLQA V5 // STABLE",
     frame: false,
     resizable: true,
     backgroundColor: '#000000',
@@ -21,21 +21,19 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'dist-web/index.html'));
   
-  // Set up taskbar transport control overlays for Windows OS
   if (process.platform === 'win32') {
-    setThumbarButtons(false); // Initialize with standby state
+    setThumbarButtons(false);
   }
 }
 
-// Native Windows System Media Control Engine
 function setThumbarButtons(isPlaying) {
   if (!win || process.platform !== 'win32') return;
 
   try {
     win.setThumbarButtons([
       {
-        tooltip: 'Previous Track',
-        icon: path.join(__dirname, isPlaying ? 'icon.ico' : 'icon.ico'), // Fallback to app icon layer
+        tooltip: 'Back',
+        icon: path.join(__dirname, 'icon.ico'), 
         flags: [],
         click() { win.webContents.send('media-command', 'prev'); }
       },
@@ -46,7 +44,7 @@ function setThumbarButtons(isPlaying) {
         click() { win.webContents.send('media-command', 'play-pause'); }
       },
       {
-        tooltip: 'Next Track',
+        tooltip: 'Next',
         icon: path.join(__dirname, 'icon.ico'),
         flags: [],
         click() { win.webContents.send('media-command', 'next'); }
@@ -57,33 +55,28 @@ function setThumbarButtons(isPlaying) {
   }
 }
 
-// Window Operations Router
+// --- IPC WINDOW OPERATIONS MATRIX ---
+
 ipcMain.on('window-control', (event, action) => {
   if (!win) return;
   if (action === 'close') win.close();
   if (action === 'minimize') win.minimize();
 });
 
-// Windows Media Playback Hook Sync
 ipcMain.on('sync-native-media', (event, data) => {
   if (!win || !data) return;
-  
-  // Force Windows to keep background throttling from sleeping the audio thread
-  app.commandLine.appendSwitch('disable-renderer-backgrounding');
-  app.commandLine.appendSwitch('disable-background-timer-throttling');
-
-  // Dynamically update taskbar controls to match active state
   setThumbarButtons(data.isPlaying);
 });
 
-// Discord Rich Presence Node
+// --- DISCORD TELEMETRY DISPATCH ---
+
 const rpc = new DiscordRPC.Client({ transport: 'ipc' });
 
 function setInitialPresence() {
   if (!rpc) return;
   rpc.setActivity({
     details: 'idle in the menus',
-    state: 'quellqa v3 // speed',
+    state: 'quellqa audio',
     largeImageKey: 'quellqa_logo',
     instance: false,
   }).catch(console.error);
@@ -93,9 +86,9 @@ ipcMain.on('update-rpc', (event, track) => {
   if (!rpc) return;
   if (track && track.isPlaying) {
     rpc.setActivity({
-      details: `${track.title.toUpperCase()} // ${track.artist.toUpperCase()}`,
-      state: `${track.album.toUpperCase()}`,
-      largeImageKey: 'quellqa_logo',
+      details: `${track.title} // by ${track.artist}`,
+      state: `on ${track.album}`,
+      largeImageKey: track.rpcArt && track.rpcArt.startsWith('data:') ? track.rpcArt : 'quellqa_logo',
       instance: false,
     }).catch(console.error);
   } else {
@@ -106,11 +99,14 @@ ipcMain.on('update-rpc', (event, track) => {
 rpc.on('ready', () => { setInitialPresence(); });
 rpc.login({ clientId }).catch(console.error);
 
-// Initialize application lifecycle + Global OS Media Keys Mapping
+// --- HARDWARE LIFECYCLE ROUTERS ---
+
 app.whenReady().then(() => {
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+
   createWindow();
 
-  // Register native keyboard media listeners to send back down into the web canvas
   globalShortcut.register('MediaPlayPause', () => {
     win?.webContents.send('media-command', 'play-pause');
   });
