@@ -1,44 +1,40 @@
 {
-  "name": "quellqa-audio",
-  "version": "5.0.0",
+  "name": "quellqa",
+  "version": "6.5.0",
   "main": "main.js",
-  "description": "QUELLQA",
-  "type": "commonjs",
+  "description": "Audio Listening Environment",
+  "author": "ValorieMcFlurry",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "package": "vite build && electron-builder"
+    "package": "electron-builder build --win"
   },
   "dependencies": {
     "discord-rpc": "^4.0.1",
-    "music-metadata-browser": "^2.5.10",
     "lucide-react": "^0.300.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "music-metadata-browser": "^2.5.10",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.19",
-    "electron": "^28.2.0",
-    "electron-builder": "^24.9.1",
-    "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.4",
-    "vite": "^5.3.1"
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.quellqa.audio",
-    "productName": "QUELLQAAUDIO",
-    "files": [
-      "dist-web/**/*",
-      "main.js",
-      "icon.ico"
-    ],
+    "appId": "com.quellqa.player",
+    "productName": "QUELLQA",
     "directories": {
-      "output": "dist"
+      "output": "dist-built"
     },
     "win": {
-      "target": "portable",
+      "target": "nsis",
       "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "QUELLQA",
+      "uninstallDisplayName": "Uninstall QUELLQA"
     }
   }
 }
