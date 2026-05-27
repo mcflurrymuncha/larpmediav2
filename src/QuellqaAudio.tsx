@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Folder, Repeat, Volume2, Settings, Disc, Trash2, Radio, Library, Sliders } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Folder, Repeat, Volume2, Disc, Trash2, Radio, Library, Search, Edit2 } from 'lucide-react';
 import * as musicMetadata from 'music-metadata-browser';
 
 interface Track {
@@ -19,124 +19,183 @@ interface AlbumGroup {
   tracks: Track[];
 }
 
-interface RuntimePalette {
-  bg: string;
-  panel: string;
-  border: string;
-  text: string;
-  secondary: string;
-  accent: string;
-  accentText: string;
-}
+// Low-Level IndexedDB Native Core Initialization
+const DB_NAME = "QuellqaArchivalDB";
+const STORE_NAME = "tracks";
+
+const initIndexedDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const saveTracksToDB = async (tracks: Track[]): Promise<void> => {
+  const db = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    tracks.forEach(track => store.put(track));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+};
+
+const getTracksFromDB = async (): Promise<Track[]> => {
+  const db = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const clearDBStore = async (): Promise<void> => {
+  const db = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    store.clear();
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+};
 
 export default function QuellqaAudio() {
-  const version = "v7.0 // crossfade-matrix";
   const [activeTab, setActiveTab] = useState<'playing' | 'library'>('library');
-  
-  // Custom Design Architecture Core
-  const [palette, setPalette] = useState<RuntimePalette>(() => {
-    try {
-      const saved = localStorage.getItem('quellqa_custom_palette');
-      return saved ? JSON.parse(saved) : { bg: '#000000', panel: '#050505', border: '#161616', text: '#a1a1aa', secondary: '#52525b', accent: '#dc2626', accentText: '#ffffff' };
-    } catch(e) { return { bg: '#000000', panel: '#050505', border: '#161616', text: '#a1a1aa', secondary: '#52525b', accent: '#dc2626', accentText: '#ffffff' }; }
-  });
-
-  const [masterTracks, setMasterTracks] = useState<Track[]>(() => {
-    try {
-      const saved = localStorage.getItem('quellqa_vault_v7');
-      return saved ? JSON.parse(saved) : [];
-    } catch(e) { return []; }
-  });
-
+  const [masterTracks, setMasterTracks] = useState<Track[]>([]);
   const [activeQueue, setActiveQueue] = useState<Track[]>([]);
   const [currentIdx, setCurrentIdx] = useState<number>(-1);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isLooping, setIsLooping] = useState<boolean>(false);
-  const [rpcEnabled, setRpcEnabled] = useState<boolean>(true);
-  const [showSettings, setShowSettings] = useState<boolean>(false);
 
-  // Crossfade Parametric State Array
-  const [crossfadeDuration, setCrossfadeDuration] = useState<number>(4); // Range: 0 (Instant Gapless) to 12 seconds
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [sortBy, setSortBy] = useState<'track' | 'alpha'>('track');
+  const [editingTrack, setEditingTrack] = useState<Track | null>(null);
+
+  const [pitchRate, setPitchRate] = useState<number>(1.0); 
+  const [stereoPan, setStereoPan] = useState<number>(0.0); 
+  const [crossfadeDuration] = useState<number>(4); 
   const isTransitioningRef = useRef<boolean>(false);
 
-  // Dual-Deck Tracking Variables
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.8);
 
   const [preamp, setPreamp] = useState<number>(0);
-  const [bass, setBass] = useState<number>(10);   
-  const [mid, setMid] = useState<number>(-4);    
-  const [treble, setTreble] = useState<number>(3); 
-  const [activePreset, setActivePreset] = useState<string>("Custom");
+  const [subBass, setSubBass] = useState<number>(6);   
+  const [lowMid, setLowMid] = useState<number>(3);     
+  const [mid, setMid] = useState<number>(-2);         
+  const [highMid, setHighMid] = useState<number>(4);   
+  const [treble, setTreble] = useState<number>(2);     
 
-  // Dual HTML5 Audio Nodes for Overlapping Soundfields
   const audioARef = useRef<HTMLAudioElement | null>(null);
   const audioBRef = useRef<HTMLAudioElement | null>(null);
   const activeDeckRef = useRef<'A' | 'B'>('A');
 
-  // Web Audio Processing Graph Routing Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainANodeRef = useRef<GainNode | null>(null);
   const gainBNodeRef = useRef<GainNode | null>(null);
   const preampNodeRef = useRef<GainNode | null>(null);
-  const bassNodeRef = useRef<BiquadFilterNode | null>(null);
+  const pannerNodeRef = useRef<StereoPannerNode | null>(null);
+  
+  const subNodeRef = useRef<BiquadFilterNode | null>(null);
+  const lowMidNodeRef = useRef<BiquadFilterNode | null>(null);
   const midNodeRef = useRef<BiquadFilterNode | null>(null);
-  const trebleNodeRef = useRef<BiquadFilterNode | null>(null);
+  const highMidNodeRef = useRef<BiquadFilterNode | null>(null);
+  const trebNodeRef = useRef<BiquadFilterNode | null>(null);
 
-  useEffect(() => { localStorage.setItem('quellqa_custom_palette', JSON.stringify(palette)); }, [palette]);
-  useEffect(() => { localStorage.setItem('quellqa_vault_v7', JSON.stringify(masterTracks)); }, [masterTracks]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const analyserNodeRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
-  // Global Audio Graph Hardware Mounting Function
+  // Load from database on startup boot cycle
+  useEffect(() => {
+    getTracksFromDB().then(tracks => {
+      setMasterTracks(tracks);
+    }).catch(err => console.error("Database mount failure", err));
+  }, []);
+
+  useEffect(() => {
+    if (currentIdx !== -1 && activeQueue[currentIdx]) {
+      const currentTrack = activeQueue[currentIdx];
+      document.title = `Playing: ${currentTrack.title} — ${currentTrack.artist}`;
+    } else {
+      document.title = "QUELLQA V8.5";
+    }
+  }, [currentIdx, activeQueue, isPlaying]);
+
   const initAudioGraph = () => {
     if (audioCtxRef.current) return;
     
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioCtxRef.current = ctx;
 
-    // Create dual deck source lines
     const srcA = ctx.createMediaElementSource(audioARef.current!);
     const srcB = ctx.createMediaElementSource(audioBRef.current!);
 
-    // Create target mix fader volume matrix blocks
     const gainA = ctx.createGain();
     const gainB = ctx.createGain();
-    gainANodeRef.current = gainA;
-    gainBNodeRef.current = gainB;
+    gainANodeRef.current = gainA; gainBNodeRef.current = gainB;
 
-    // Build common master parametric filter arrays
     const p = ctx.createGain();
-    const b = ctx.createBiquadFilter(); b.type = 'lowshelf'; b.frequency.value = 140;
-    const m = ctx.createBiquadFilter(); m.type = 'peaking'; m.frequency.value = 1000;
-    const t = ctx.createBiquadFilter(); t.type = 'highshelf'; t.frequency.value = 5000;
+    const panner = ctx.createStereoPanner();
+    pannerNodeRef.current = panner;
 
-    // Route Deck A and Deck B to master processing block
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 64; 
+    analyserNodeRef.current = analyser;
+
+    const eqSub = ctx.createBiquadFilter(); eqSub.type = 'lowshelf'; eqSub.frequency.value = 60;
+    const eqLowMid = ctx.createBiquadFilter(); eqLowMid.type = 'peaking'; eqLowMid.frequency.value = 230;
+    const eqMid = ctx.createBiquadFilter(); eqMid.type = 'peaking'; eqMid.frequency.value = 910;
+    const eqHighMid = ctx.createBiquadFilter(); eqHighMid.type = 'peaking'; eqHighMid.frequency.value = 4000;
+    const eqTreb = ctx.createBiquadFilter(); eqTreb.type = 'highshelf'; eqTreb.frequency.value = 14000;
+
     srcA.connect(gainA).connect(p);
     srcB.connect(gainB).connect(p);
-    p.connect(b).connect(m).connect(t).connect(ctx.destination);
-
-    preampNodeRef.current = p; bassNodeRef.current = b; midNodeRef.current = m; trebleNodeRef.current = t;
     
-    // Set baseline channel settings
-    gainA.gain.value = 1;
+    p.connect(panner).connect(eqSub).connect(eqLowMid).connect(eqMid).connect(eqHighMid).connect(eqTreb).connect(analyser).connect(ctx.destination);
+
+    preampNodeRef.current = p; 
+    subNodeRef.current = eqSub; lowMidNodeRef.current = eqLowMid; 
+    midNodeRef.current = eqMid; highMidNodeRef.current = eqHighMid; 
+    trebNodeRef.current = eqTreb;
+    
+    gainA.gain.value = volume;
     gainB.gain.value = 0;
+    
     updateDsp();
+    startCanvasRenderLoop();
   };
 
   const updateDsp = () => {
     const now = audioCtxRef.current?.currentTime || 0;
     preampNodeRef.current?.gain.setValueAtTime(Math.pow(10, preamp / 20), now);
-    bassNodeRef.current?.gain.setValueAtTime(bass, now);
+    subNodeRef.current?.gain.setValueAtTime(subBass, now);
+    lowMidNodeRef.current?.gain.setValueAtTime(lowMid, now);
     midNodeRef.current?.gain.setValueAtTime(mid, now);
-    trebleNodeRef.current?.gain.setValueAtTime(treble, now);
-  };
-  useEffect(() => { updateDsp(); }, [preamp, bass, mid, treble]);
+    highMidNodeRef.current?.gain.setValueAtTime(highMid, now);
+    trebNodeRef.current?.gain.setValueAtTime(treble, now);
 
-  // Sync Global Volumes
+    if (pannerNodeRef.current) pannerNodeRef.current.pan.setValueAtTime(stereoPan, now);
+    if (audioARef.current) audioARef.current.playbackRate = pitchRate;
+    if (audioBRef.current) audioBRef.current.playbackRate = pitchRate;
+  };
+  useEffect(() => { updateDsp(); }, [preamp, subBass, lowMid, mid, highMid, treble, stereoPan, pitchRate]);
+
   useEffect(() => {
     if (!audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
-    // Keep internal faders scaled based on Master Volume setting
     if (activeDeckRef.current === 'A' && !isTransitioningRef.current) {
       gainANodeRef.current?.gain.setValueAtTime(volume, now);
       gainBNodeRef.current?.gain.setValueAtTime(0, now);
@@ -146,7 +205,6 @@ export default function QuellqaAudio() {
     }
   }, [volume]);
 
-  // Master Timeline Lookahead Loop Engine (Manages the Crossfade)
   useEffect(() => {
     const handleTimeUpdate = () => {
       const activeAudio = activeDeckRef.current === 'A' ? audioARef.current : audioBRef.current;
@@ -155,27 +213,21 @@ export default function QuellqaAudio() {
       setCurrentTime(activeAudio.currentTime);
       setDuration(activeAudio.duration || 0);
 
-      // Trigger crossfade sequence when track reaches the threshold window
       const remainingTime = activeAudio.duration - activeAudio.currentTime;
-      if (remainingTime <= crossfadeDuration && crossfadeDuration > 0 && currentIdx < activeQueue.length - 1) {
+      if (remainingTime <= crossfadeDuration && currentIdx < activeQueue.length - 1) {
         triggerLinearCrossfade();
       }
     };
 
     const handleEnded = () => {
-      if (crossfadeDuration === 0 && currentIdx < activeQueue.length - 1) {
-        // If crossfade is disabled (0s), jump instantly to the next track
-        executeTrackSkip(currentIdx + 1);
-      } else if (currentIdx === activeQueue.length - 1 && !isLooping) {
-        setIsPlaying(false);
-      } else if (currentIdx === activeQueue.length - 1 && isLooping) {
-        executeTrackSkip(0);
+      if (currentIdx === activeQueue.length - 1) {
+        if (isLooping) executeTrackSkip(0);
+        else setIsPlaying(false);
       }
     };
 
     const aElement = audioARef.current;
     const bElement = audioBRef.current;
-
     aElement?.addEventListener('timeupdate', handleTimeUpdate);
     bElement?.addEventListener('timeupdate', handleTimeUpdate);
     aElement?.addEventListener('ended', handleEnded);
@@ -187,9 +239,8 @@ export default function QuellqaAudio() {
       aElement?.removeEventListener('ended', handleEnded);
       bElement?.removeEventListener('ended', handleEnded);
     };
-  }, [currentIdx, activeQueue, crossfadeDuration, isLooping]);
+  }, [currentIdx, activeQueue, isLooping]);
 
-  // Dynamic Linear Crossfade Automation Graph
   const triggerLinearCrossfade = () => {
     if (isTransitioningRef.current || !audioCtxRef.current) return;
     isTransitioningRef.current = true;
@@ -203,13 +254,13 @@ export default function QuellqaAudio() {
     const outgoingGain = currentDeck === 'A' ? gainANodeRef.current! : gainBNodeRef.current!;
     const incomingGain = nextDeck === 'A' ? gainANodeRef.current! : gainBNodeRef.current!;
 
-    // Set up the incoming deck track parameters
     incomingAudio.src = activeQueue[nextIdx].url;
-    incomingAudio.volume = 1; 
+    incomingAudio.playbackRate = pitchRate;
     incomingGain.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
+    
+    setIsPlaying(true); 
     incomingAudio.play().catch(() => {});
 
-    // Schedule linear volume adjustments over the crossfade timeline
     const now = audioCtxRef.current.currentTime;
     outgoingGain.gain.setValueAtTime(volume, now);
     outgoingGain.gain.linearRampToValueAtTime(0, now + crossfadeDuration);
@@ -217,18 +268,16 @@ export default function QuellqaAudio() {
     incomingGain.gain.setValueAtTime(0, now);
     incomingGain.gain.linearRampToValueAtTime(volume, now + crossfadeDuration);
 
-    // Swap active target pointers mid-flight
     setCurrentIdx(nextIdx);
     activeDeckRef.current = nextDeck;
 
     setTimeout(() => {
       outgoingAudio.pause();
-      outgoingAudio.src = ""; // Flush the outgoing track data from cache
+      outgoingAudio.src = "";
       isTransitioningRef.current = false;
     }, crossfadeDuration * 1000);
   };
 
-  // Instant Track Cut Function (Used for Manual Skips)
   const executeTrackSkip = (targetIdx: number) => {
     if (!activeQueue[targetIdx]) return;
     initAudioGraph();
@@ -241,40 +290,85 @@ export default function QuellqaAudio() {
     const activeGain = activeDeckRef.current === 'A' ? gainANodeRef.current! : gainBNodeRef.current!;
     const inactiveGain = activeDeckRef.current === 'A' ? gainBNodeRef.current! : gainANodeRef.current!;
 
-    // Cut off the secondary audio path completely
-    inactiveAudio.pause();
-    inactiveAudio.src = "";
+    inactiveAudio.pause(); inactiveAudio.src = "";
     inactiveGain.gain.setValueAtTime(0, now);
 
-    // Direct the active deck route to play the target track immediately
     activeGain.gain.setValueAtTime(volume, now);
     activeAudio.src = activeQueue[targetIdx].url;
-    activeAudio.play().catch(() => {});
+    activeAudio.playbackRate = pitchRate;
     
-    setCurrentIdx(targetIdx);
     setIsPlaying(true);
+    activeAudio.play().catch(() => {});
+    setCurrentIdx(targetIdx);
   };
 
-  // Discord presence sync script line routing
-  useEffect(() => {
-    if (currentIdx === -1 || !activeQueue[currentIdx]) return;
-    const track = activeQueue[currentIdx];
-    try {
-      const { ipcRenderer } = window.require('electron');
-      ipcRenderer.send('sync-native-media', { title: track.title, artist: track.artist, isPlaying });
-      ipcRenderer.send('update-rpc', rpcEnabled ? { title: track.title, artist: track.artist, album: track.album, isPlaying } : null);
-    } catch(e){}
-  }, [isPlaying, currentIdx, activeQueue, rpcEnabled]);
+  const startCanvasRenderLoop = () => {
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    const canvas = canvasRef.current;
+    const analyser = analyserNodeRef.current;
+    if (!canvas || !analyser) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const render = () => {
+      animationFrameRef.current = requestAnimationFrame(render);
+      analyser.getByteFrequencyData(dataArray);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const barWidth = (canvas.width / bufferLength) * 1.25;
+      let barHeight; let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = dataArray[i] * 0.45;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
+        x += barWidth;
+      }
+    };
+    render();
+  };
+
+  const applyMetadataOverride = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTrack) return;
+
+    const updatedMaster = masterTracks.map(t => t.id === editingTrack.id ? editingTrack : t);
+    setMasterTracks(updatedMaster);
+    const updatedQueue = activeQueue.map(t => t.id === editingTrack.id ? editingTrack : t);
+    setActiveQueue(updatedQueue);
+
+    await saveTracksToDB([editingTrack]);
+    setEditingTrack(null);
+  };
 
   const albums: AlbumGroup[] = React.useMemo(() => {
     const map: { [key: string]: AlbumGroup } = {};
-    masterTracks.forEach(t => {
-      const key = (t.album || "Unknown").toLowerCase();
+    const query = searchQuery.toLowerCase().trim();
+    const filtered = masterTracks.filter(t => 
+      t.title.toLowerCase().includes(query) || 
+      t.artist.toLowerCase().includes(query) || 
+      t.album.toLowerCase().includes(query)
+    );
+
+    filtered.forEach(t => {
+      const key = (t.album || "Unknown").toLowerCase().trim();
       if (!map[key]) map[key] = { albumName: t.album, artistName: t.artist, coverArt: t.coverArt, tracks: [] };
       map[key].tracks.push(t);
     });
-    return Object.values(map).map(a => ({ ...a, tracks: a.tracks.sort((x, y) => x.trackNo - y.trackNo) }));
-  }, [masterTracks]);
+
+    return Object.values(map).map(a => ({
+      ...a,
+      tracks: a.tracks.sort((x, y) => {
+        if (sortBy === 'alpha') return x.title.localeCompare(y.title);
+        return x.trackNo - y.trackNo;
+      })
+    }));
+  }, [masterTracks, searchQuery, sortBy]);
 
   const handleImport = async (e: any) => {
     const files = e.target.files;
@@ -293,215 +387,220 @@ export default function QuellqaAudio() {
         } catch(err) {}
       }
     }
-    setMasterTracks(prev => [...prev, ...news]);
+    const globalPlaylist = [...masterTracks, ...news];
+    setMasterTracks(globalPlaylist);
+    await saveTracksToDB(news); // Stream directly to IndexedDB sectors safely
+  };
+
+  const wipeLibrary = async () => {
+    setMasterTracks([]); setActiveQueue([]); setCurrentIdx(-1); setIsPlaying(false);
+    if (audioRef.current) audioRef.current.src = "";
+    await clearDBStore();
   };
 
   return (
-    <div className="flex flex-col h-screen font-mono text-[11px] tracking-tight" style={{ backgroundColor: palette.bg, color: palette.text }}>
-      
-      {/* Hidden Dual Hardware Elements */}
+    <div className="flex flex-col h-screen font-mono text-[11px] tracking-tight bg-black text-white selection:bg-zinc-800">
+      <style>{`
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 8px; height: 12px; background: #ffffff; cursor: pointer; border-radius: 0px; }
+        input[type="range"]::-moz-range-thumb { width: 8px; height: 12px; background: #ffffff; cursor: pointer; border-radius: 0px; border: none; }
+      `}</style>
+
       <audio ref={audioARef} crossOrigin="anonymous" />
       <audio ref={audioBRef} crossOrigin="anonymous" />
       
-      {/* HEADER TIER */}
-      <div className="h-10 border-b flex items-center justify-between px-4 titlebar-drag shrink-0" style={{ borderColor: palette.border }}>
+      {/* HEADER OPERATIONS PANEL */}
+      <div className="h-10 border-b border-zinc-900 flex items-center justify-between px-4 titlebar-drag shrink-0 bg-black">
         <div className="flex gap-2 titlebar-nodrag">
-          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'close')} className="w-3 h-3 rounded-full bg-red-600/30 hover:bg-red-600 transition cursor-pointer" />
-          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'minimize')} className="w-3 h-3 rounded-full bg-zinc-600/30 hover:bg-zinc-400 transition cursor-pointer" />
+          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'close')} className="w-3 h-3 rounded-full bg-zinc-900 hover:bg-red-600 transition cursor-pointer" />
+          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'minimize')} className="w-3 h-3 rounded-full bg-zinc-900 hover:bg-zinc-700 transition cursor-pointer" />
         </div>
-        <div className="flex gap-4 titlebar-nodrag font-bold">
-          <button onClick={() => setActiveTab('playing')} className="flex items-center gap-1.5 uppercase transition" style={{ color: activeTab === 'playing' ? palette.accent : palette.secondary }}><Radio size={12}/>Deck Studio</button>
-          <button onClick={() => setActiveTab('library')} className="flex items-center gap-1.5 uppercase transition" style={{ color: activeTab === 'library' ? palette.accent : palette.secondary }}><Library size={12}/>Library</button>
+        <div className="flex gap-6 titlebar-nodrag font-bold">
+          <button onClick={() => setActiveTab('playing')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'playing' ? 'text-white' : 'text-zinc-600'}`}><Radio size={12}/>Deck Studio</button>
+          <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? 'text-white' : 'text-zinc-600'}`}><Library size={12}/>Library Vault</button>
         </div>
-        <Settings onClick={() => setShowSettings(!showSettings)} size={14} className="cursor-pointer transition titlebar-nodrag" style={{ color: showSettings ? palette.accent : palette.secondary }} />
+        <span className="text-[9px] font-bold tracking-widest text-zinc-700">DB_SECURE_V8.5</span>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        
-        {/* INTERFACE COLOR MATRIX CONFIGURATION MENU */}
-        {showSettings && (
-          <div className="absolute inset-0 z-50 p-6 flex gap-6" style={{ backgroundColor: palette.bg }}>
-            <div className="w-full flex flex-col gap-4 overflow-y-auto" style={{ borderColor: palette.border }}>
-              <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: palette.accent }}>Hex Synthesis Matrices</span>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { label: 'Background Color hex', key: 'bg' },
-                  { label: 'Inner Housing structural panel', key: 'panel' },
-                  { label: 'Structural Separation Vector line', key: 'border' },
-                  { label: 'Primary text font color', key: 'text' },
-                  { label: 'Secondary dimmed parametric tags', key: 'secondary' },
-                  { label: 'Active processing accent node', key: 'accent' },
-                ].map((node) => (
-                  <div key={node.key} className="flex items-center justify-between p-2 border rounded" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
-                    <span className="font-bold text-[10px] uppercase tracking-tight">{node.label}</span>
-                    <input type="color" value={palette[node.key as keyof RuntimePalette]} onChange={(e) => setPalette(prev => ({ ...prev, [node.key]: e.target.value }))} className="w-7 h-5 cursor-pointer bg-transparent border-none" />
-                  </div>
-                ))}
+      <div className="flex-1 flex overflow-hidden bg-black relative">
+        {editingTrack && (
+          <div className="absolute inset-0 bg-black bg-opacity-95 z-50 p-8 flex items-center justify-center">
+            <form onSubmit={applyMetadataOverride} className="w-full max-w-sm border border-zinc-900 p-6 flex flex-col gap-4 bg-black">
+              <span className="text-[10px] font-bold tracking-widest uppercase text-zinc-500">Modify Cache ID3 Tags</span>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-zinc-600 uppercase font-bold">Track Title</label>
+                <input type="text" value={editingTrack.title} onChange={e=>setEditingTrack({...editingTrack, title: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
               </div>
-              <button onClick={() => setShowSettings(false)} className="w-full mt-4 py-2 font-bold text-[10px] uppercase tracking-widest text-center" style={{ backgroundColor: palette.accent, color: palette.accentText }}>Flush Design modifications</button>
-            </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-zinc-600 uppercase font-bold">Recording Artist</label>
+                <input type="text" value={editingTrack.artist} onChange={e=>setEditingTrack({...editingTrack, artist: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-zinc-600 uppercase font-bold">Target Album Compilation</label>
+                <input type="text" value={editingTrack.album} onChange={e=>setEditingTrack({...editingTrack, album: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] text-zinc-600 uppercase font-bold">Index Track Position No</label>
+                <input type="number" value={editingTrack.trackNo} onChange={e=>setEditingTrack({...editingTrack, trackNo: parseInt(e.target.value) || 0})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button type="button" onClick={()=>setEditingTrack(null)} className="w-1/2 border border-zinc-900 py-2 font-bold uppercase text-zinc-500 hover:text-white transition">Cancel</button>
+                <button type="submit" className="w-1/2 bg-white text-black font-bold uppercase py-2 transition">Commit Tags</button>
+              </div>
+            </form>
           </div>
         )}
 
         {activeTab === 'playing' ? (
           <div className="flex-1 flex">
-            
-            {/* PARAMETRIC CONFIGURATION HUB BAR */}
-            <div className="w-64 border-r p-5 flex flex-col justify-between shrink-0" style={{ borderColor: palette.border }}>
+            <div className="w-64 border-r border-zinc-900 p-4 flex flex-col justify-between shrink-0 bg-black overflow-y-auto">
               <div className="flex flex-col gap-4">
-                
-                {/* CROSSFADE DESIGN BLOCK AREA */}
-                <div className="border p-3 rounded flex flex-col gap-2" style={{ backgroundColor: palette.panel, borderColor: palette.border }}>
-                  <div className="flex justify-between items-center text-[9px] font-bold">
-                    <span style={{ color: palette.accent }}>CROSSFADE TIMELINE</span>
-                    <span>{crossfadeDuration} SECONDS</span>
+                <div className="border border-zinc-900 p-3 flex flex-col gap-3 bg-black">
+                  <span className="text-[8px] font-bold tracking-widest text-zinc-500 uppercase">Varispeed Sub-system</span>
+                  <div>
+                    <div className="flex justify-between text-[8px] font-bold text-zinc-400 mb-1"><span>PITCH RATE</span><span>{pitchRate.toFixed(2)}x</span></div>
+                    <input type="range" min="0.5" max="2.0" step="0.01" value={pitchRate} onChange={e=>setPitchRate(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
                   </div>
-                  <input 
-                    type="range" 
-                    min="0" 
-                    max="12" 
-                    step="1" 
-                    value={crossfadeDuration} 
-                    onChange={e => setCrossfadeDuration(parseInt(e.target.value))}
-                    className="w-full h-1 outline-none appearance-none cursor-pointer"
-                    style={{ backgroundColor: palette.border }}
-                  />
-                  <div className="text-[8px] opacity-40 leading-tight">Sets the overlap transition curve window for overlapping tracks. Set to 0 for instant, gapless studio cuts.</div>
+                  <div>
+                    <div className="flex justify-between text-[8px] font-bold text-zinc-400 mb-1"><span>STEREO BALANCE</span><span>{stereoPan === 0 ? 'CENTER' : stereoPan < 0 ? `L ${Math.abs(Math.round(stereoPan * 100))}%` : `R ${Math.round(stereoPan * 100)}%`}</span></div>
+                    <input type="range" min="-1.0" max="1.0" step="0.02" value={stereoPan} onChange={e=>setStereoPan(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+                  </div>
                 </div>
 
-                <div className="h-32 border p-3 flex justify-between" style={{ backgroundColor: palette.panel, borderColor: palette.border }}>
-                  {[{l:'BASS',v:bass,s:setBass},{l:'MID',v:mid,s:setMid},{l:'TREB',v:treble,s:setTreble}].map((c,i)=>(
-                    <div key={i} className="flex flex-col items-center justify-between w-1/3">
-                      <span className="text-[9px] font-bold">{c.v > 0 ? '+'+c.v : c.v}</span>
-                      <input type="range" min="-12" max="12" step="0.5" value={c.v} orient="vertical" onChange={e=>c.s(parseFloat(e.target.value))} className="h-16 w-1 outline-none appearance-none" style={{ backgroundColor: palette.border }} />
-                      <span className="text-[8px] font-bold mt-1" style={{ color: palette.secondary }}>{c.l}</span>
+                <div className="h-40 border border-zinc-900 p-3 flex justify-between bg-black">
+                  {[
+                    { label: '60Hz', v: subBass, s: setSubBass },
+                    { label: '230Hz', v: lowMid, s: setLowMid },
+                    { label: '910Hz', v: mid, s: setMid },
+                    { label: '4kHz', v: highMid, s: setHighMid },
+                    { label: '14kHz', v: treble, s: setTreble }
+                  ].map((c, i) => (
+                    <div key={i} className="flex flex-col items-center justify-between w-1/5">
+                      <span className="text-[8px] font-bold text-zinc-400">{c.v > 0 ? `+${c.v}` : c.v}</span>
+                      <input type="range" min="-12" max="12" step="1" value={c.v} orient="vertical" onChange={e => c.s(parseFloat(e.target.value))} className="h-24 w-1 bg-zinc-900 outline-none appearance-none" />
+                      <span className="text-[7px] font-bold text-zinc-600 tracking-tighter mt-1">{c.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="flex flex-1 flex-col items-center justify-center py-4">
-                <div className="w-36 h-36 border flex items-center justify-center overflow-hidden" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
-                  {activeQueue[currentIdx]?.coverArt ? <img src={activeQueue[currentIdx].coverArt} className="w-full h-full object-cover" /> : <Disc size={35} className="animate-spin-slow" style={{ color: palette.secondary }} />}
+              <div className="flex flex-col gap-2 py-3 border-t border-b border-zinc-900/50 my-2">
+                <span className="text-[8px] font-bold tracking-widest text-zinc-500 uppercase">FFT Frequency Transform</span>
+                <div className="w-full h-16 border border-zinc-900 relative bg-black overflow-hidden">
+                  <canvas ref={canvasRef} width="222" height="64" className="w-full h-full block" />
                 </div>
               </div>
 
-              <div className="border p-3" style={{ backgroundColor: palette.panel, borderColor: palette.border }}>
-                <div className="flex justify-between text-[9px] font-bold mb-2"><span>PRE_AMP</span><span>{preamp} DB</span></div>
-                <input type="range" min="-12" max="12" step="0.5" value={preamp} onChange={e=>setPreamp(parseFloat(e.target.value))} className="w-full h-1 outline-none appearance-none" style={{ backgroundColor: palette.border }} />
+              <div className="border border-zinc-900 p-3 bg-black">
+                <div className="flex justify-between text-[9px] font-bold text-zinc-400 mb-1"><span>GAIN PRE_AMP</span><span>{preamp} DB</span></div>
+                <input type="range" min="-12" max="12" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
               </div>
             </div>
 
-            {/* CHANNEL ACTIVE DISPATCH QUEUE PANELS */}
-            <div className="flex-1 p-5 flex flex-col">
-              <span className="text-[10px] font-bold uppercase mb-4 tracking-widest" style={{ color: palette.secondary }}>Active Deck Matrix Stack</span>
-              <div className="flex-1 border overflow-y-auto" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
-                {activeQueue.length ? activeQueue.map((t,i)=>(
+            <div className="flex-1 p-5 flex flex-col bg-black">
+              <span className="text-[10px] font-bold uppercase mb-3 tracking-widest text-zinc-600">Active Queue Pipeline</span>
+              <div className="flex-1 border border-zinc-900 overflow-y-auto bg-black">
+                {activeQueue.length ? activeQueue.map((t, i) => (
                   <div 
                     key={i} 
-                    onClick={() => executeTrackSkip(i)} 
-                    className="flex items-center justify-between p-3 border-b cursor-pointer transition" 
-                    style={{ 
-                      borderColor: palette.border, 
-                      backgroundColor: currentIdx === i ? palette.accent : 'transparent',
-                      color: currentIdx === i ? palette.accentText : palette.text 
-                    }}
+                    className="flex items-center justify-between p-3 border-b border-zinc-900 cursor-pointer transition group" 
+                    style={{ backgroundColor: currentIdx === i ? '#ffffff' : 'transparent', color: currentIdx === i ? '#000000' : '#ffffff' }}
                   >
-                    <div className="flex items-center gap-4 truncate">
-                      <span className="text-[9px] font-bold" style={{ color: currentIdx === i ? palette.accentText : palette.secondary }}>{String(t.trackNo||i+1).padStart(2,'0')}</span>
+                    <div onClick={() => executeTrackSkip(i)} className="flex-1 flex items-center gap-4 truncate">
+                      <span className="text-[9px] font-bold" style={{ color: currentIdx === i ? '#000000' : '#52525b' }}>{String(t.trackNo || i + 1).padStart(2, '0')}</span>
                       <span className="font-bold truncate">{t.title}</span>
+                      <span className="text-[10px] pl-4 truncate opacity-60" style={{ color: currentIdx === i ? '#222' : '#52525b' }}>{t.artist}</span>
                     </div>
-                    <span className="text-[10px] pl-4 shrink-0" style={{ color: currentIdx === i ? palette.accentText : palette.secondary }}>{t.artist}</span>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingTrack(t); }} className={`p-1 opacity-0 group-hover:opacity-100 transition rounded ${currentIdx === i ? 'text-black hover:bg-zinc-200' : 'text-zinc-500 hover:text-white'}`}><Edit2 size={11} /></button>
                   </div>
-                )) : <div className="h-full flex items-center justify-center italic opacity-30 tracking-widest">Deck Processing Line Unassigned</div>}
+                )) : <div className="h-full flex items-center justify-center italic text-zinc-700 tracking-widest">Deck Workspace Stack Empty</div>}
               </div>
             </div>
           </div>
         ) : (
-          /* ================= COMPACT LIBRARY PANEL GRIDS ================= */
-          <div className="flex-1 p-8 flex flex-col overflow-hidden">
-            <div className="flex justify-between items-center mb-8">
-              <div>
-                <h2 className="text-sm font-bold uppercase tracking-wider" style={{ color: palette.accent }}>Integrated Data Storage Vault</h2>
-                <p className="text-[10px]" style={{ color: palette.secondary }}>Mounting a storage folder completely replaces the active deck stream array.</p>
+          <div className="flex-1 p-6 flex flex-col overflow-hidden bg-black">
+            <div className="flex justify-between items-stretch gap-4 mb-6 shrink-0">
+              <div className="flex-1 flex flex-col justify-between">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-white">Archival System Vault</h2>
+                <div className="flex items-center gap-2 border border-zinc-900 bg-zinc-950 px-3 py-1.5 mt-2 max-w-md">
+                  <Search size={12} className="text-zinc-600" />
+                  <input type="text" placeholder="Fuzzy query tracks, artists, unreleased tags..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-white outline-none border-none text-[11px] font-mono" />
+                </div>
               </div>
-              <div className="flex gap-3">
-                <button onClick={() => setMasterTracks([])} className="flex items-center gap-2 border px-4 py-2 text-[10px] font-bold uppercase" style={{ borderColor: palette.accent, color: palette.accent }}><Trash2 size={12}/>Wipe library</button>
-                <label className="flex items-center gap-2 border px-6 py-2 cursor-pointer text-[10px] font-bold uppercase" style={{ borderColor: palette.border, color: palette.text }}>
-                  <Folder size={12}/>Mount Audio Block
-                  <input type="file" multiple accept="audio/*" onChange={handleImport} className="hidden" />
-                </label>
+              <div className="flex flex-col items-end justify-between gap-2">
+                <div className="flex gap-2 text-[9px] items-center">
+                  <span className="text-zinc-600 font-bold uppercase">Matrix Sort:</span>
+                  <button onClick={()=>setSortBy('track')} className={`px-2 py-0.5 border ${sortBy === 'track' ? 'border-white text-white font-bold' : 'border-zinc-900 text-zinc-600'}`}>Track No</button>
+                  <button onClick={()=>setSortBy('alpha')} className={`px-2 py-0.5 border ${sortBy === 'alpha' ? 'border-white text-white font-bold' : 'border-zinc-900 text-zinc-600'}`}>A-Z Title</button>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={wipeLibrary} className="flex items-center gap-2 border border-zinc-900 text-zinc-500 px-4 py-1.5 hover:bg-zinc-900/50 transition text-[10px] font-bold uppercase"><Trash2 size={11}/>Clear Storage</button>
+                  <label className="flex items-center gap-2 border border-white text-white px-5 py-1.5 cursor-pointer hover:bg-white hover:text-black transition text-[10px] font-bold uppercase">
+                    <Folder size={11}/>Mount Directory Loop
+                    <input type="file" multiple accept="audio/*" onChange={handleImport} className="hidden" />
+                  </label>
+                </div>
               </div>
             </div>
             
-            <div className="flex-1 border p-5 overflow-y-auto" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
+            <div className="flex-1 border border-zinc-900 p-4 overflow-y-auto bg-black">
               {albums.length ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                  {albums.map((a,i)=>(
-                    <div key={i} onClick={() => { setActiveQueue(a.tracks); setCurrentIdx(0); setActiveTab('playing'); setTimeout(() => executeTrackSkip(0), 50); }} className="border p-4 flex flex-col gap-4 group cursor-pointer transition" style={{ borderColor: palette.border, backgroundColor: palette.bg }}>
-                      <div className="aspect-square border relative overflow-hidden" style={{ borderColor: palette.border }}>
-                        {a.coverArt ? <img src={a.coverArt} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Disc size={30} style={{ color: palette.secondary }}/></div>}
-                        <div className="absolute bottom-2 right-2 px-2 py-0.5 text-[8px] font-bold border uppercase" style={{ backgroundColor: palette.bg, borderColor: palette.border, color: palette.secondary }}>{a.tracks.length} lines</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {albums.map((a, i) => (
+                    <div key={i} onClick={() => { setActiveQueue(a.tracks); setCurrentIdx(0); setActiveTab('playing'); setTimeout(() => executeTrackSkip(0), 25); }} className="border border-zinc-900 p-3 flex flex-col gap-3 group cursor-pointer hover:border-white transition bg-black">
+                      <div className="aspect-square border border-zinc-900 relative overflow-hidden bg-black">
+                        {a.coverArt ? <img src={a.coverArt} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-zinc-950"><Disc size={24} className="text-zinc-800"/></div>}
+                        <div className="absolute bottom-1 right-1 bg-black px-1.5 py-0.5 text-[7px] font-bold border border-zinc-900 uppercase text-zinc-500">{a.tracks.length} lines</div>
                       </div>
                       <div className="truncate">
-                        <div className="font-bold truncate" style={{ color: palette.text }}>{a.albumName}</div>
-                        <div className="text-[10px] truncate mt-0.5" style={{ color: palette.secondary }}>{a.artistName}</div>
+                        <div className="font-bold truncate text-white">{a.albumName}</div>
+                        <div className="text-[10px] truncate text-zinc-600 mt-0.5">{a.artistName}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="h-full flex items-center justify-center opacity-40 italic tracking-widest"><Disc size={40} className="mb-2 animate-spin-slow"/>Empty Storage Vault</div>
+                <div className="h-full flex items-center justify-center text-zinc-700 italic tracking-widest">Database Storage Filter Engine Returned Null</div>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* TRACK TIMELINE DISPLAY BAR */}
-      <div className="h-6 border-t px-4 flex items-center gap-3" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
-        <span className="text-[9px]" style={{ color: palette.secondary }}>
-          {Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}
-        </span>
-        <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e=>{ const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className="flex-1 h-1 appearance-none outline-none cursor-pointer" style={{ backgroundColor: palette.border }} />
-        <span className="text-[9px]" style={{ color: palette.secondary }}>
-          {Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}
-        </span>
+      <div className="h-6 border-t border-zinc-900 px-4 flex items-center gap-3 bg-black">
+        <span className="text-[9px] text-zinc-500">{Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}</span>
+        <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e => { const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className="flex-1 h-1 bg-zinc-900 outline-none appearance-none cursor-pointer" />
+        <span className="text-[9px] text-zinc-500">{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
       </div>
 
-      {/* RUNTIME TELEMETRY TRACK PANEL FOOTER */}
-      <div className="h-20 border-t flex items-center justify-between px-6 shrink-0" style={{ borderColor: palette.border, backgroundColor: palette.panel }}>
+      <div className="h-16 border-t border-zinc-900 flex items-center justify-between px-6 shrink-0 bg-black">
         <div className="w-1/3 truncate">
           {currentIdx !== -1 && activeQueue[currentIdx] ? (
             <>
-              <div className="text-[13px] font-bold truncate" style={{ color: palette.text }}>{activeQueue[currentIdx].title}</div>
-              <div className="text-[10px] mt-1 uppercase font-bold tracking-widest" style={{ color: palette.secondary }}>{activeQueue[currentIdx].artist} // {activeQueue[currentIdx].album}</div>
+              <div className="text-[12px] font-bold truncate text-white">{activeQueue[currentIdx].title}</div>
+              <div className="text-[9px] mt-0.5 uppercase font-bold tracking-widest text-zinc-600">{activeQueue[currentIdx].artist} // {activeQueue[currentIdx].album}</div>
             </>
           ) : (
-            <span className="text-[10px] font-bold tracking-widest" style={{ color: palette.secondary }}>DECK RUNTIME STANDBY</span>
+            <span className="text-[9px] font-bold tracking-widest text-zinc-700 uppercase">System Standby</span>
           )}
         </div>
 
-        {/* CONTROLS */}
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => currentIdx > 0 && executeTrackSkip(currentIdx - 1)} disabled={currentIdx <= 0} className="w-9 h-9 border flex items-center justify-center transition disabled:opacity-10" style={{ borderColor: palette.border }}><SkipBack size={13} /></button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => currentIdx > 0 && executeTrackSkip(currentIdx - 1)} disabled={currentIdx <= 0} className="w-8 h-8 border border-zinc-900 flex items-center justify-center transition disabled:opacity-10 text-white hover:border-white"><SkipBack size={12} /></button>
           <button onClick={() => { 
             const activeAudio = activeDeckRef.current === 'A' ? audioARef.current! : audioBRef.current!;
             if(isPlaying){ activeAudio.pause(); setIsPlaying(false); } else if(activeQueue.length){ activeAudio.play().catch(()=>{}); setIsPlaying(true); } 
-          }} className="w-12 h-9 border flex items-center justify-center transition" style={{ borderColor: palette.border }}>{isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}</button>
-          <button onClick={() => currentIdx < activeQueue.length - 1 && executeTrackSkip(currentIdx + 1)} disabled={currentIdx === -1 || currentIdx >= activeQueue.length - 1} className="w-9 h-9 border flex items-center justify-center transition disabled:opacity-10" style={{ borderColor: palette.border }}><SkipForward size={13} /></button>
-          <button onClick={() => setIsLooping(!isLooping)} className="w-9 h-9 border flex items-center justify-center transition ml-3" style={{ backgroundColor: isLooping ? palette.accent : 'transparent', color: isLooping ? palette.accentText : palette.secondary, borderColor: palette.border }}><Repeat size={13} /></button>
+          }} className="w-10 h-8 border border-zinc-900 flex items-center justify-center transition text-white hover:border-white">{isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}</button>
+          <button onClick={() => currentIdx < activeQueue.length - 1 && executeTrackSkip(currentIdx + 1)} disabled={currentIdx === -1 || currentIdx >= activeQueue.length - 1} className="w-8 h-8 border border-zinc-900 flex items-center justify-center transition disabled:opacity-10 text-white hover:border-white"><SkipForward size={12} /></button>
+          <button onClick={() => setIsLooping(!isLooping)} className="w-8 h-8 border flex items-center justify-center transition ml-2" style={{ backgroundColor: isLooping ? '#ffffff' : 'transparent', color: isLooping ? '#000000' : '#52525b', borderColor: isLooping ? 'transparent' : '#1f1f23' }}><Repeat size={12} /></button>
         </div>
 
-        <div className="w-1/3 flex items-center justify-end gap-4">
-          <div className="flex items-center gap-2 border px-3 py-1.5 rounded" style={{ borderColor: palette.border, backgroundColor: palette.bg }}>
-            <Volume2 size={12} style={{ color: palette.secondary }} />
-            <input type="range" min="0" max="1" step="0.01" value={volume} onChange={e=>setVolume(parseFloat(e.target.value))} className="w-16 h-1 appearance-none outline-none cursor-pointer" style={{ backgroundColor: palette.border }} />
-            <span className="text-[10px] font-bold font-mono min-w-8 text-right" style={{ color: palette.text }}>{Math.round(volume * 100)}%</span>
+        <div className="w-1/3 flex items-center justify-end gap-3">
+          <div className="flex items-center gap-2 border border-zinc-900 px-3 py-1 bg-black">
+            <Volume2 size={11} className="text-zinc-600" />
+            <input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(parseFloat(e.target.value))} className="w-14 h-1 bg-zinc-900 outline-none appearance-none cursor-pointer" />
+            <span className="text-[9px] font-bold font-mono min-w-6 text-right text-zinc-400">{Math.round(volume * 100)}%</span>
           </div>
-          <div className="text-[11px] font-bold tracking-widest pl-3 border-l" style={{ borderColor: palette.border, color: palette.secondary }}>
-            {activeQueue.length ? `[${currentIdx + 1}/${activeQueue.length}]` : '[0/0]'}
-          </div>
+          <div className="text-[10px] font-bold tracking-widest pl-3 border-l border-zinc-900 text-zinc-600">{activeQueue.length ? `[${currentIdx + 1}/${activeQueue.length}]` : '[0/0]'}</div>
         </div>
       </div>
     </div>
