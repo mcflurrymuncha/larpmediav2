@@ -19,7 +19,6 @@ interface AlbumGroup {
   tracks: Track[];
 }
 
-// Low-Level IndexedDB Native Core Initialization
 const DB_NAME = "QuellqaArchivalDB";
 const STORE_NAME = "tracks";
 
@@ -118,19 +117,25 @@ export default function QuellqaAudio() {
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Load from database on startup boot cycle
   useEffect(() => {
-    getTracksFromDB().then(tracks => {
-      setMasterTracks(tracks);
-    }).catch(err => console.error("Database mount failure", err));
+    getTracksFromDB().then(tracks => { setMasterTracks(tracks); }).catch(() => {});
   }, []);
 
+  // AUTOMATED SYSTEM WINDOW FRAME & DISCORD IPC BROADCASTER EFFECT LOOP
   useEffect(() => {
     if (currentIdx !== -1 && activeQueue[currentIdx]) {
       const currentTrack = activeQueue[currentIdx];
       document.title = `Playing: ${currentTrack.title} — ${currentTrack.artist}`;
+      
+      // Send raw payload across the IPC channel loop
+      try {
+        const { ipcRenderer } = window.require('electron');
+        ipcRenderer.send('sync-native-media', { title: currentTrack.title, artist: currentTrack.artist, isPlaying });
+        ipcRenderer.send('update-rpc', { title: currentTrack.title, artist: currentTrack.artist, album: currentTrack.album, isPlaying });
+      } catch(e) {}
     } else {
-      document.title = "QUELLQA V8.5";
+      document.title = "QUELLQA // ARCHIVAL HARDWARE DECK";
+      try { window.require('electron').ipcRenderer.send('update-rpc', null); } catch(e) {}
     }
   }, [currentIdx, activeQueue, isPlaying]);
 
@@ -163,7 +168,6 @@ export default function QuellqaAudio() {
 
     srcA.connect(gainA).connect(p);
     srcB.connect(gainB).connect(p);
-    
     p.connect(panner).connect(eqSub).connect(eqLowMid).connect(eqMid).connect(eqHighMid).connect(eqTreb).connect(analyser).connect(ctx.destination);
 
     preampNodeRef.current = p; 
@@ -389,12 +393,11 @@ export default function QuellqaAudio() {
     }
     const globalPlaylist = [...masterTracks, ...news];
     setMasterTracks(globalPlaylist);
-    await saveTracksToDB(news); // Stream directly to IndexedDB sectors safely
+    await saveTracksToDB(news); 
   };
 
   const wipeLibrary = async () => {
     setMasterTracks([]); setActiveQueue([]); setCurrentIdx(-1); setIsPlaying(false);
-    if (audioRef.current) audioRef.current.src = "";
     await clearDBStore();
   };
 
@@ -566,12 +569,14 @@ export default function QuellqaAudio() {
         )}
       </div>
 
+      {/* TRACK TIMELINE SLIDER */}
       <div className="h-6 border-t border-zinc-900 px-4 flex items-center gap-3 bg-black">
         <span className="text-[9px] text-zinc-500">{Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}</span>
         <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e => { const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className="flex-1 h-1 bg-zinc-900 outline-none appearance-none cursor-pointer" />
         <span className="text-[9px] text-zinc-500">{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
       </div>
 
+      {/* FOOTER MASTER CONTROLS BAR */}
       <div className="h-16 border-t border-zinc-900 flex items-center justify-between px-6 shrink-0 bg-black">
         <div className="w-1/3 truncate">
           {currentIdx !== -1 && activeQueue[currentIdx] ? (
