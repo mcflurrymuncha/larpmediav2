@@ -3,7 +3,7 @@ const path = require('path');
 const DiscordRPC = require('discord-rpc');
 
 let win;
-const clientId = '1508392537914871838'; 
+const clientId = '1508392537914871838'; // Your specific corporate registration ID
 
 function createWindow() {
   win = new BrowserWindow({
@@ -66,17 +66,17 @@ ipcMain.on('sync-native-media', (event, data) => {
   setThumbarButtons(data.isPlaying);
 });
 
-// --- DISCORD TELEMETRY MATRIX ---
+// ================= DISCORD TELEMETRY MATRIX BACKGROUND NODE =================
 const rpc = new DiscordRPC.Client({ transport: 'ipc' });
 
 function setInitialPresence() {
   if (!rpc) return;
   rpc.setActivity({
-    details: 'Idle in the Menus',
-    state: 'Quellqa v6.5 // Stable',
+    details: 'Browsing',
+    state: 'Quellqa',
     largeImageKey: 'quellqa_logo',
     instance: false,
-  }).catch(console.error);
+  }).catch(() => {});
 }
 
 ipcMain.on('update-rpc', (event, track) => {
@@ -84,14 +84,14 @@ ipcMain.on('update-rpc', (event, track) => {
   
   if (track && track.isPlaying) {
     rpc.setActivity({
-      type: 2,                                   // Forces the "Listening to..." state
-      details: `${track.title} — ${track.artist}`, // Original metadata preservation
+      type: 2,                                     // Activity code forced to "Listening to..."
+      details: `${track.title} — ${track.artist}`,
       state: `Album: ${track.album}`,             
       largeImageKey: 'quellqa_logo',
-      largeImageText: 'Quellqa Audio Subsystem v6.5',
+      largeImageText: 'Quellqa Audio Subsystem v8.5',
       instance: false,
     }).catch((err) => {
-      console.error("RPC Presence generation failed:", err);
+      console.error("Discord presence injection failed:", err);
     });
   } else {
     setInitialPresence();
@@ -99,7 +99,7 @@ ipcMain.on('update-rpc', (event, track) => {
 });
 
 rpc.on('ready', () => { setInitialPresence(); });
-rpc.login({ clientId }).catch(console.error);
+rpc.login({ clientId }).catch(() => console.log("Discord Client Link Standby..."));
 
 app.whenReady().then(() => {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
