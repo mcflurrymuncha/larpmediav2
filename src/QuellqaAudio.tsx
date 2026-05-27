@@ -90,6 +90,7 @@ export default function QuellqaAudio() {
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.8);
 
+  // V9 OVERDRIVE: Initialized flat, sliders accept wider bounds
   const [preamp, setPreamp] = useState<number>(0);
   const [subBass, setSubBass] = useState<number>(0);   
   const [lowMid, setLowMid] = useState<number>(0);     
@@ -124,7 +125,7 @@ export default function QuellqaAudio() {
   useEffect(() => {
     if (currentIdx !== -1 && activeQueue[currentIdx]) {
       const currentTrack = activeQueue[currentIdx];
-      document.title = `Playing: ${currentTrack.title} — ${currentTrack.artist}`;
+      document.title = `[v9] ${currentTrack.title} — ${currentTrack.artist}`;
       
       try {
         const { ipcRenderer } = window.require('electron');
@@ -132,7 +133,7 @@ export default function QuellqaAudio() {
         ipcRenderer.send('update-rpc', { title: currentTrack.title, artist: currentTrack.artist, album: currentTrack.album, isPlaying });
       } catch(e) {}
     } else {
-      document.title = "QUELLQA // ARCHIVAL HARDWARE DECK";
+      document.title = "QUELLQA";
       try { window.require('electron').ipcRenderer.send('update-rpc', null); } catch(e) {}
     }
   }, [currentIdx, activeQueue, isPlaying]);
@@ -167,7 +168,6 @@ export default function QuellqaAudio() {
     srcA.connect(gainA).connect(p);
     srcB.connect(gainB).connect(p);
     
-    // EQ MATRIX SEQUENTIAL CHAINING
     p.connect(panner)
      .connect(eqSub)
      .connect(eqLowMid)
@@ -357,6 +357,19 @@ export default function QuellqaAudio() {
     setEditingTrack(null);
   };
 
+  // NUCLEAR OPTION: Combines all albums, flattening arrays into one single queue stack
+  const triggerNuclearLoadAll = () => {
+    if (!masterTracks.length) return;
+    const flatQueue = [...masterTracks].sort((x, y) => {
+      if (sortBy === 'alpha') return x.title.localeCompare(y.title);
+      return x.trackNo - y.trackNo;
+    });
+    setActiveQueue(flatQueue);
+    setCurrentIdx(0);
+    setActiveTab('playing');
+    setTimeout(() => executeTrackSkip(0), 40);
+  };
+
   const albums: AlbumGroup[] = React.useMemo(() => {
     const map: { [key: string]: AlbumGroup } = {};
     const query = searchQuery.toLowerCase().trim();
@@ -473,9 +486,9 @@ export default function QuellqaAudio() {
         </div>
         <div className="flex gap-6 titlebar-nodrag font-bold">
           <button onClick={() => setActiveTab('playing')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'playing' ? 'text-white' : 'text-zinc-600'}`}><Radio size={12}/>Deck Studio</button>
-          <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? 'text-white' : 'text-zinc-600'}`}><Library size={12}/>Library Vault</button>
+          <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? 'text-white' : 'text-zinc-600'}`}><Library size={12}/>Library</button>
         </div>
-        <span className="text-[9px] font-bold tracking-widest text-zinc-700">DB_SECURE_V8.5.1</span>
+        <span className="text-[9px] font-bold tracking-widest text-zinc-700">V9.0.0</span>
       </div>
 
       <div className="flex-1 flex overflow-hidden bg-black relative">
@@ -527,7 +540,7 @@ export default function QuellqaAudio() {
                   </div>
                 </div>
 
-                {/* HARDWARE EQ SLIDERS COMPONENT */}
+                {/* HARDWARE EQ SLIDERS COMPONENT - OVERDRIVEN V9 BOUNDS (±32) */}
                 <div className="h-40 border border-zinc-900 p-3 flex justify-between bg-black">
                   {[
                     { label: '60Hz', v: subBass, s: setSubBass },
@@ -541,8 +554,8 @@ export default function QuellqaAudio() {
                       <div className="flex-1 flex items-center justify-center my-1">
                         <input 
                           type="range" 
-                          min="-12" 
-                          max="12" 
+                          min="-32" 
+                          max="32" 
                           step="1" 
                           value={c.v} 
                           orient="vertical" 
@@ -563,9 +576,10 @@ export default function QuellqaAudio() {
                 </div>
               </div>
 
+              {/* OVERDRIVEN V9 BOUNDS PRE-AMP GAIN STAGE (±32) */}
               <div className="border border-zinc-900 p-3 bg-black">
-                <div className="flex justify-between text-[9px] font-bold text-zinc-400 mb-1"><span>GAIN PRE_AMP</span><span>{preamp} DB</span></div>
-                <input type="range" min="-12" max="12" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+                <div className="flex justify-between text-[9px] font-bold text-zinc-400 mb-1"><span>GAIN PRE_AMP</span><span>{preamp > 0 ? `+${preamp}` : preamp} DB</span></div>
+                <input type="range" min="-32" max="32" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
               </div>
             </div>
 
@@ -593,7 +607,7 @@ export default function QuellqaAudio() {
           <div className="flex-1 p-6 flex flex-col overflow-hidden bg-black">
             <div className="flex justify-between items-stretch gap-4 mb-6 shrink-0">
               <div className="flex-1 flex flex-col justify-between">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-white">Archival System Vault</h2>
+                <h2 className="text-xs font-bold uppercase tracking-wider text-white">Archive</h2>
                 <div className="flex items-center gap-2 border border-zinc-900 bg-zinc-950 px-3 py-1.5 mt-2 max-w-md">
                   <Search size={12} className="text-zinc-600" />
                   <input type="text" placeholder="Fuzzy query tracks, artists, unreleased tags..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-white outline-none border-none text-[11px] font-mono" />
@@ -607,8 +621,14 @@ export default function QuellqaAudio() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={wipeLibrary} className="flex items-center gap-2 border border-zinc-900 text-zinc-500 px-4 py-1.5 hover:bg-zinc-900/50 transition text-[10px] font-bold uppercase"><Trash2 size={11}/>Clear Storage</button>
+                  
+                  {/* THE NUKE INTERFACE LOOP CONTROL */}
+                  <button onClick={triggerNuclearLoadAll} disabled={!masterTracks.length} className="flex items-center gap-2 border border-red-600 text-red-500 px-4 py-1.5 bg-red-950/10 hover:bg-red-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-red-500 transition text-[10px] font-bold uppercase">
+                    <span>☢️</span> ALL TRACKS
+                  </button>
+
                   <label className="flex items-center gap-2 border border-white text-white px-5 py-1.5 cursor-pointer hover:bg-white hover:text-black transition text-[10px] font-bold uppercase">
-                    <Folder size={11}/>Mount Directory Loop
+                    <Folder size={11}/>Import Album(s)
                     <input type="file" multiple accept="audio/*" onChange={handleImport} className="hidden" />
                   </label>
                 </div>
