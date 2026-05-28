@@ -1,8 +1,8 @@
 {
   "name": "quellqa-audio",
-  "version": "9.0.0",
+  "version": "X",
   "main": "main.js",
-  "description": "QUELLQA",
+  "description": "QUELLQA VX",
   "author": "ValorieMcFlurry",
   "type": "commonjs",
   "scripts": {
@@ -28,7 +28,7 @@
   },
   "build": {
     "appId": "com.quellqa.audio",
-    "productName": "QUELLQAV8.5",
+    "productName": "QUELLQA",
     "files": [
       "dist-web/**/*",
       "main.js",
