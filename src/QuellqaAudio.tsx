@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Folder, Repeat, Volume2, Disc, Trash2, Radio, Library, Search, Edit2 } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Folder, Repeat, Volume2, Disc, Trash2, Radio, Library, Search, Edit2, Palette } from 'lucide-react';
 import * as musicMetadata from 'music-metadata-browser';
 
 interface Track {
@@ -8,7 +8,7 @@ interface Track {
   artist: string;
   album: string;
   trackNo: number;
-  url: string;
+  url: string; // Restarts fallback pointer
   coverArt: string; 
 }
 
@@ -18,6 +18,8 @@ interface AlbumGroup {
   coverArt: string;
   tracks: Track[];
 }
+
+type ThemeName = 'industrial' | 'lean' | 'red' | 'gloop' | 'light';
 
 const DB_NAME = "QuellqaArchivalDB";
 const STORE_NAME = "tracks";
@@ -80,6 +82,7 @@ export default function QuellqaAudio() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sortBy, setSortBy] = useState<'track' | 'alpha'>('track');
   const [editingTrack, setEditingTrack] = useState<Track | null>(null);
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>('industrial');
 
   const [pitchRate, setPitchRate] = useState<number>(1.0); 
   const [stereoPan, setStereoPan] = useState<number>(0.0); 
@@ -90,7 +93,6 @@ export default function QuellqaAudio() {
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.8);
 
-  // V9 OVERDRIVE: Initialized flat, sliders accept wider bounds
   const [preamp, setPreamp] = useState<number>(0);
   const [subBass, setSubBass] = useState<number>(0);   
   const [lowMid, setLowMid] = useState<number>(0);     
@@ -118,14 +120,44 @@ export default function QuellqaAudio() {
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
+  // Theme profiles configurations
+  const themes = {
+    industrial: { bg: 'bg-black', text: 'text-white', border: 'border-zinc-900', secondaryBg: 'bg-zinc-950', accentText: 'text-zinc-400', accentBorder: 'border-white', primaryHex: '#ffffff', sliderBg: 'bg-zinc-900' },
+    lean: { bg: 'bg-neutral-950', text: 'text-fuchsia-100', border: 'border-purple-950/60', secondaryBg: 'bg-purple-950/20', accentText: 'text-purple-400', accentBorder: 'border-fuchsia-500', primaryHex: '#d946ef', sliderBg: 'bg-purple-950/50' },
+    red: { bg: 'bg-neutral-950', text: 'text-rose-100', border: 'border-rose-950/60', secondaryBg: 'bg-rose-950/20', accentText: 'text-rose-500', accentBorder: 'border-rose-600', primaryHex: '#f43f5e', sliderBg: 'bg-rose-950/50' },
+    gloop: { bg: 'bg-stone-950', text: 'text-emerald-100', border: 'border-emerald-950', secondaryBg: 'bg-emerald-950/10', accentText: 'text-emerald-400', accentBorder: 'border-emerald-500', primaryHex: '#10b981', sliderBg: 'bg-emerald-950/30' },
+    light: { bg: 'bg-stone-50', text: 'text-neutral-900', border: 'border-stone-300', secondaryBg: 'bg-stone-200/60', accentText: 'text-stone-500', accentBorder: 'border-neutral-900', primaryHex: '#171717', sliderBg: 'bg-stone-300' }
+  };
+  const ui = themes[currentTheme];
+
   useEffect(() => {
     getTracksFromDB().then(tracks => { setMasterTracks(tracks); }).catch(() => {});
   }, []);
 
+  // Listen to Electron global media key commands safely 
+  useEffect(() => {
+    try {
+      const { ipcRenderer } = window.require('electron');
+      const handleMediaCommand = (_event: any, command: string) => {
+        if (command === 'play-pause') {
+          const activeAudio = activeDeckRef.current === 'A' ? audioARef.current! : audioBRef.current!;
+          if (isPlaying) { activeAudio.pause(); setIsPlaying(false); }
+          else if (activeQueue.length) { activeAudio.play().catch(() => {}); setIsPlaying(true); }
+        } else if (command === 'next') {
+          if (currentIdx < activeQueue.length - 1) executeTrackSkip(currentIdx + 1);
+        } else if (command === 'prev') {
+          if (currentIdx > 0) executeTrackSkip(currentIdx - 1);
+        }
+      };
+      ipcRenderer.on('media-command', handleMediaCommand);
+      return () => { ipcRenderer.removeListener('media-command', handleMediaCommand); };
+    } catch (e) {}
+  }, [isPlaying, currentIdx, activeQueue]);
+
   useEffect(() => {
     if (currentIdx !== -1 && activeQueue[currentIdx]) {
       const currentTrack = activeQueue[currentIdx];
-      document.title = `[v9] ${currentTrack.title} — ${currentTrack.artist}`;
+      document.title = `${currentTrack.title} — ${currentTrack.artist}`;
       
       try {
         const { ipcRenderer } = window.require('electron');
@@ -133,7 +165,7 @@ export default function QuellqaAudio() {
         ipcRenderer.send('update-rpc', { title: currentTrack.title, artist: currentTrack.artist, album: currentTrack.album, isPlaying });
       } catch(e) {}
     } else {
-      document.title = "QUELLQA";
+      document.title = "Quellqa Version X";
       try { window.require('electron').ipcRenderer.send('update-rpc', null); } catch(e) {}
     }
   }, [currentIdx, activeQueue, isPlaying]);
@@ -328,7 +360,8 @@ export default function QuellqaAudio() {
     const render = () => {
       animationFrameRef.current = requestAnimationFrame(render);
       analyser.getByteFrequencyData(dataArray);
-      ctx.fillStyle = '#000000';
+      
+      ctx.fillStyle = currentTheme === 'light' ? '#f5f5f4' : '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       const barWidth = (canvas.width / bufferLength) * 1.25;
@@ -336,13 +369,14 @@ export default function QuellqaAudio() {
 
       for (let i = 0; i < bufferLength; i++) {
         barHeight = dataArray[i] * 0.45;
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = ui.primaryHex;
         ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
         x += barWidth;
       }
     };
     render();
   };
+  useEffect(() => { startCanvasRenderLoop(); }, [currentTheme]);
 
   const applyMetadataOverride = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -357,7 +391,6 @@ export default function QuellqaAudio() {
     setEditingTrack(null);
   };
 
-  // NUCLEAR OPTION: Combines all albums, flattening arrays into one single queue stack
   const triggerNuclearLoadAll = () => {
     if (!masterTracks.length) return;
     const flatQueue = [...masterTracks].sort((x, y) => {
@@ -394,26 +427,41 @@ export default function QuellqaAudio() {
     }));
   }, [masterTracks, searchQuery, sortBy]);
 
-  const handleImport = async (e: any) => {
-    const files = e.target.files;
-    if (!files) return;
-    const news: Track[] = [];
-    for (let f of files) {
-      if (f.name.match(/\.(mp3|wav|flac|m4a)$/i)) {
-        try {
-          const meta = await musicMetadata.parseBlob(f);
-          let art = "";
-          if (meta.common.picture?.[0]) {
-            const pic = meta.common.picture[0];
-            art = `data:${pic.format};base64,${btoa(pic.data.reduce((d, b) => d + String.fromCharCode(b), ''))}`;
-          }
-          news.push({ id: Date.now() + Math.random(), title: meta.common.title || f.name, artist: meta.common.artist || "Unknown", album: meta.common.album || "Local", trackNo: meta.common.track.no || 0, url: URL.createObjectURL(f), coverArt: art });
-        } catch(err) {}
+  // Restarts Safe Local Stream Importer
+  const handleImport = async () => {
+    try {
+      const { ipcRenderer } = window.require('electron');
+      const files = await ipcRenderer.invoke('select-music-dir');
+      if (!files || !files.length) return;
+
+      const news: Track[] = [];
+      for (let file of files) {
+        const response = await fetch(file.nativeUrl);
+        const blob = await response.blob();
+        const meta = await musicMetadata.parseBlob(blob);
+        let art = "";
+        if (meta.common.picture?.[0]) {
+          const pic = meta.common.picture[0];
+          art = `data:${pic.format};base64,${btoa(pic.data.reduce((d, b) => d + String.fromCharCode(b), ''))}`;
+        }
+
+        news.push({
+          id: Date.now() + Math.random(),
+          title: meta.common.title || file.name,
+          artist: meta.common.artist || "Unknown Artist",
+          album: meta.common.album || "Unknown Album",
+          trackNo: meta.common.track.no || 0,
+          url: file.nativeUrl, // Absolute stream address safely mapped across session restarts
+          coverArt: art
+        });
       }
+
+      const globalPlaylist = [...masterTracks, ...news];
+      setMasterTracks(globalPlaylist);
+      await saveTracksToDB(news);
+    } catch (err) {
+      console.error("Local load chain aborted: ", err);
     }
-    const globalPlaylist = [...masterTracks, ...news];
-    setMasterTracks(globalPlaylist);
-    await saveTracksToDB(news); 
   };
 
   const wipeLibrary = async () => {
@@ -422,9 +470,8 @@ export default function QuellqaAudio() {
   };
 
   return (
-    <div className="flex flex-col h-screen font-mono text-[11px] tracking-tight bg-black text-white selection:bg-zinc-800">
+    <div className={`flex flex-col h-screen font-mono text-[11px] tracking-tight ${ui.bg} ${ui.text} selection:bg-neutral-800 transition-colors duration-200`}>
       <style>{`
-        /* Fix vertical slider drag mechanics in Webkit/Electron */
         input[type="range"][orient="vertical"] {
           writing-mode: vertical-lr;
           direction: rtl;
@@ -433,45 +480,19 @@ export default function QuellqaAudio() {
           height: 96px;
           background: transparent;
         }
-
-        /* Keep horizontal track styling clean */
         input[type="range"]:not([orient="vertical"])[type="range"]::-webkit-slider-thumb { 
-          -webkit-appearance: none; 
-          appearance: none; 
-          width: 8px; 
-          height: 12px; 
-          background: #ffffff; 
-          cursor: pointer; 
-          border-radius: 0px; 
+          -webkit-appearance: none; appearance: none; width: 8px; height: 12px; 
+          background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; 
         }
-        
         input[type="range"]:not([orient="vertical"])[type="range"]::-moz-range-thumb { 
-          width: 8px; 
-          height: 12px; 
-          background: #ffffff; 
-          cursor: pointer; 
-          border-radius: 0px; 
-          border: none; 
+          width: 8px; height: 12px; background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; border: none; 
         }
-
-        /* Style the vertical EQ thumbs cleanly */
         input[type="range"][orient="vertical"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 12px;
-          height: 8px;
-          background: #ffffff;
-          cursor: pointer;
-          border-radius: 0px;
+          -webkit-appearance: none; appearance: none; width: 12px; height: 8px;
+          background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px;
         }
-
         input[type="range"][orient="vertical"]::-moz-range-thumb {
-          width: 12px;
-          height: 8px;
-          background: #ffffff;
-          cursor: pointer;
-          border-radius: 0px;
-          border: none;
+          width: 12px; height: 8px; background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; border: none;
         }
       `}</style>
 
@@ -479,42 +500,54 @@ export default function QuellqaAudio() {
       <audio ref={audioBRef} crossOrigin="anonymous" />
       
       {/* HEADER OPERATIONS PANEL */}
-      <div className="h-10 border-b border-zinc-900 flex items-center justify-between px-4 titlebar-drag shrink-0 bg-black">
+      <div className={`h-10 border-b ${ui.border} flex items-center justify-between px-4 titlebar-drag shrink-0`}>
         <div className="flex gap-2 titlebar-nodrag">
-          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'close')} className="w-3 h-3 rounded-full bg-zinc-900 hover:bg-red-600 transition cursor-pointer" />
-          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'minimize')} className="w-3 h-3 rounded-full bg-zinc-900 hover:bg-zinc-700 transition cursor-pointer" />
+          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'close')} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-red-600 transition cursor-pointer" />
+          <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'minimize')} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-neutral-500 transition cursor-pointer" />
         </div>
         <div className="flex gap-6 titlebar-nodrag font-bold">
-          <button onClick={() => setActiveTab('playing')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'playing' ? 'text-white' : 'text-zinc-600'}`}><Radio size={12}/>Deck Studio</button>
-          <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? 'text-white' : 'text-zinc-600'}`}><Library size={12}/>Library</button>
+          <button onClick={() => setActiveTab('playing')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'playing' ? ui.text : 'opacity-40'}`}><Radio size={12}/>Player Studio</button>
+          <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? ui.text : 'opacity-40'}`}><Library size={12}/>Music Library</button>
         </div>
-        <span className="text-[9px] font-bold tracking-widest text-zinc-700">V9.0.0</span>
+        
+        {/* PREMADE CUSTOM THEME SELECTOR SEED */}
+        <div className="flex items-center gap-2 titlebar-nodrag">
+          <Palette size={11} className="opacity-40" />
+          <select value={currentTheme} onChange={e=>setCurrentTheme(e.target.value as ThemeName)} className={`bg-transparent outline-none border ${ui.border} text-[9px] font-bold uppercase p-0.5 px-1 cursor-pointer`}>
+            <option value="industrial" className="bg-black text-white">Default Dark</option>
+            <option value="lean" className="bg-neutral-900 text-fuchsia-400">Lean</option>
+            <option value="red" className="bg-neutral-900 text-rose-500">Whole Lotta Red</option>
+            <option value="gloop" className="bg-stone-900 text-emerald-400">Gloop</option>
+            <option value="light" className="bg-white text-black">Light Mode</option>
+          </select>
+          <span className="text-[9px] font-bold tracking-widest opacity-30 ml-2">VERSION X</span>
+        </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden bg-black relative">
+      <div className="flex-1 flex overflow-hidden relative">
         {editingTrack && (
-          <div className="absolute inset-0 bg-black bg-opacity-95 z-50 p-8 flex items-center justify-center">
-            <form onSubmit={applyMetadataOverride} className="w-full max-w-sm border border-zinc-900 p-6 flex flex-col gap-4 bg-black">
-              <span className="text-[10px] font-bold tracking-widest uppercase text-zinc-500">Modify Cache ID3 Tags</span>
+          <div className="absolute inset-0 bg-black bg-opacity-90 z-50 p-8 flex items-center justify-center">
+            <form onSubmit={applyMetadataOverride} className={`w-full max-w-sm border ${ui.border} p-6 flex flex-col gap-4 bg-zinc-950 text-white`}>
+              <span className="text-[10px] font-bold tracking-widest uppercase opacity-60">Edit Song Information</span>
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-zinc-600 uppercase font-bold">Track Title</label>
-                <input type="text" value={editingTrack.title} onChange={e=>setEditingTrack({...editingTrack, title: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+                <label className="text-[9px] opacity-40 uppercase font-bold">Song Title</label>
+                <input type="text" value={editingTrack.title} onChange={e=>setEditingTrack({...editingTrack, title: e.target.value})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-zinc-600 uppercase font-bold">Recording Artist</label>
-                <input type="text" value={editingTrack.artist} onChange={e=>setEditingTrack({...editingTrack, artist: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+                <label className="text-[9px] opacity-40 uppercase font-bold">Artist</label>
+                <input type="text" value={editingTrack.artist} onChange={e=>setEditingTrack({...editingTrack, artist: e.target.value})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-zinc-600 uppercase font-bold">Target Album Compilation</label>
-                <input type="text" value={editingTrack.album} onChange={e=>setEditingTrack({...editingTrack, album: e.target.value})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+                <label className="text-[9px] opacity-40 uppercase font-bold">Album Name</label>
+                <input type="text" value={editingTrack.album} onChange={e=>setEditingTrack({...editingTrack, album: e.target.value})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[9px] text-zinc-600 uppercase font-bold">Index Track Position No</label>
-                <input type="number" value={editingTrack.trackNo} onChange={e=>setEditingTrack({...editingTrack, trackNo: parseInt(e.target.value) || 0})} className="bg-zinc-950 border border-zinc-900 p-2 text-white outline-none" required />
+                <label className="text-[9px] opacity-40 uppercase font-bold">Track Number</label>
+                <input type="number" value={editingTrack.trackNo} onChange={e=>setEditingTrack({...editingTrack, trackNo: parseInt(e.target.value) || 0})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
               </div>
               <div className="flex gap-2 mt-2">
-                <button type="button" onClick={()=>setEditingTrack(null)} className="w-1/2 border border-zinc-900 py-2 font-bold uppercase text-zinc-500 hover:text-white transition">Cancel</button>
-                <button type="submit" className="w-1/2 bg-white text-black font-bold uppercase py-2 transition">Commit Tags</button>
+                <button type="button" onClick={()=>setEditingTrack(null)} className="w-1/2 border border-zinc-800 py-2 font-bold uppercase opacity-50 hover:opacity-100 transition">Cancel</button>
+                <button type="submit" className="w-1/2 bg-white text-black font-bold uppercase py-2 transition">Save Changes</button>
               </div>
             </form>
           </div>
@@ -522,26 +555,26 @@ export default function QuellqaAudio() {
 
         {activeTab === 'playing' ? (
           <div className="flex-1 flex">
-            <div className="w-64 border-r border-zinc-900 p-4 flex flex-col justify-between shrink-0 bg-black overflow-y-auto">
+            <div className={`w-64 border-r ${ui.border} p-4 flex flex-col justify-between shrink-0 overflow-y-auto`}>
               <div className="flex flex-col gap-4">
-                <div className="border border-zinc-900 p-3 flex flex-col gap-3 bg-black">
-                  <span className="text-[8px] font-bold tracking-widest text-zinc-500 uppercase">Varispeed Sub-system</span>
+                <div className={`border ${ui.border} p-3 flex flex-col gap-3 ${ui.secondaryBg}`}>
+                  <span className="text-[8px] font-bold tracking-widest opacity-50 uppercase">Playback Adjustments</span>
                   <div>
-                    <div className="flex justify-between text-[8px] font-bold text-zinc-400 mb-1"><span>PITCH RATE</span><span>{pitchRate.toFixed(2)}x</span></div>
-                    <input type="range" min="0.5" max="2.0" step="0.01" value={pitchRate} onChange={e=>setPitchRate(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+                    <div className={`flex justify-between text-[8px] font-bold ${ui.accentText} mb-1`}><span>SPEED & PITCH</span><span>{pitchRate.toFixed(2)}x</span></div>
+                    <input type="range" min="0.5" max="2.0" step="0.01" value={pitchRate} onChange={e=>setPitchRate(parseFloat(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
                   </div>
                   <div>
-                    <div className="flex justify-between text-[8px] font-bold text-zinc-400 mb-1"><span>CROSSFADE TIME</span><span>{crossfadeDuration}s</span></div>
-                    <input type="range" min="0" max="15" step="1" value={crossfadeDuration} onChange={e=>setCrossfadeDuration(parseInt(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+                    <div className={`flex justify-between text-[8px] font-bold ${ui.accentText} mb-1`}><span>CROSSFADE TIME</span><span>{crossfadeDuration} seconds</span></div>
+                    <input type="range" min="0" max="15" step="1" value={crossfadeDuration} onChange={e=>setCrossfadeDuration(parseInt(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
                   </div>
                   <div>
-                    <div className="flex justify-between text-[8px] font-bold text-zinc-400 mb-1"><span>STEREO BALANCE</span><span>{stereoPan === 0 ? 'CENTER' : stereoPan < 0 ? `L ${Math.abs(Math.round(stereoPan * 100))}%` : `R ${Math.round(stereoPan * 100)}%`}</span></div>
-                    <input type="range" min="-1.0" max="1.0" step="0.02" value={stereoPan} onChange={e=>setStereoPan(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+                    <div className={`flex justify-between text-[8px] font-bold ${ui.accentText} mb-1`}><span>STEREO BALANCE</span><span>{stereoPan === 0 ? 'CENTER' : stereoPan < 0 ? `LEFT ${Math.abs(Math.round(stereoPan * 100))}%` : `RIGHT ${Math.round(stereoPan * 100)}%`}</span></div>
+                    <input type="range" min="-1.0" max="1.0" step="0.02" value={stereoPan} onChange={e=>setStereoPan(parseFloat(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
                   </div>
                 </div>
 
-                {/* HARDWARE EQ SLIDERS COMPONENT - OVERDRIVEN V9 BOUNDS (±32) */}
-                <div className="h-40 border border-zinc-900 p-3 flex justify-between bg-black">
+                {/* HARDWARE EQ SLIDERS COMPONENT - OVERDRIVEN ±32 RANGE */}
+                <div className={`h-40 border ${ui.border} p-3 flex justify-between ${ui.secondaryBg}`}>
                   {[
                     { label: '60Hz', v: subBass, s: setSubBass },
                     { label: '230Hz', v: lowMid, s: setLowMid },
@@ -550,7 +583,7 @@ export default function QuellqaAudio() {
                     { label: '14kHz', v: treble, s: setTreble }
                   ].map((c, i) => (
                     <div key={i} className="flex flex-col items-center justify-between w-1/5 h-full">
-                      <span className="text-[8px] font-bold text-zinc-400 h-3">{c.v > 0 ? `+${c.v}` : c.v}</span>
+                      <span className="text-[8px] font-bold opacity-70 h-3">{c.v > 0 ? `+${c.v}` : c.v}</span>
                       <div className="flex-1 flex items-center justify-center my-1">
                         <input 
                           type="range" 
@@ -563,96 +596,95 @@ export default function QuellqaAudio() {
                           className="outline-none accent-white" 
                         />
                       </div>
-                      <span className="text-[7px] font-bold text-zinc-600 tracking-tighter h-3">{c.label}</span>
+                      <span className="text-[7px] font-bold opacity-40 tracking-tighter h-3">{c.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 py-3 border-t border-b border-zinc-900/50 my-2">
-                <span className="text-[8px] font-bold tracking-widest text-zinc-500 uppercase">FFT Frequency Transform</span>
-                <div className="w-full h-16 border border-zinc-900 relative bg-black overflow-hidden">
+              <div className="flex flex-col gap-2 py-3 my-2">
+                <span className="text-[8px] font-bold tracking-widest opacity-50 uppercase">Visualiser</span>
+                <div className={`w-full h-16 border ${ui.border} relative overflow-hidden`}>
                   <canvas ref={canvasRef} width="222" height="64" className="w-full h-full block" />
                 </div>
               </div>
 
-              {/* OVERDRIVEN V9 BOUNDS PRE-AMP GAIN STAGE (±32) */}
-              <div className="border border-zinc-900 p-3 bg-black">
-                <div className="flex justify-between text-[9px] font-bold text-zinc-400 mb-1"><span>GAIN PRE_AMP</span><span>{preamp > 0 ? `+${preamp}` : preamp} DB</span></div>
-                <input type="range" min="-32" max="32" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className="w-full h-1 bg-zinc-900 outline-none appearance-none" />
+              {/* OVERDRIVEN PRE-AMP GAIN STAGE (±32) */}
+              <div className={`border ${ui.border} p-3 ${ui.secondaryBg}`}>
+                <div className="flex justify-between text-[9px] font-bold opacity-70 mb-1"><span>PRE-AMP GAIN</span><span>{preamp > 0 ? `+${preamp}` : preamp} dB</span></div>
+                <input type="range" min="-32" max="32" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
               </div>
             </div>
 
-            <div className="flex-1 p-5 flex flex-col bg-black">
-              <span className="text-[10px] font-bold uppercase mb-3 tracking-widest text-zinc-600">Active Queue Pipeline</span>
-              <div className="flex-1 border border-zinc-900 overflow-y-auto bg-black">
+            <div className="flex-1 p-5 flex flex-col">
+              <span className="text-[10px] font-bold uppercase mb-3 tracking-widest opacity-40">Current Playing Queue</span>
+              <div className={`flex-1 border ${ui.border} overflow-y-auto`}>
                 {activeQueue.length ? activeQueue.map((t, i) => (
                   <div 
                     key={i} 
-                    className="flex items-center justify-between p-3 border-b border-zinc-900 cursor-pointer transition group" 
-                    style={{ backgroundColor: currentIdx === i ? '#ffffff' : 'transparent', color: currentIdx === i ? '#000000' : '#ffffff' }}
+                    className={`flex items-center justify-between p-3 border-b ${ui.border} cursor-pointer transition group`} 
+                    style={{ backgroundColor: currentIdx === i ? ui.primaryHex : 'transparent', color: currentIdx === i ? (currentTheme === 'light' ? '#ffffff' : '#000000') : 'inherit' }}
                   >
                     <div onClick={() => executeTrackSkip(i)} className="flex-1 flex items-center gap-4 truncate">
-                      <span className="text-[9px] font-bold" style={{ color: currentIdx === i ? '#000000' : '#52525b' }}>{String(t.trackNo || i + 1).padStart(2, '0')}</span>
+                      <span className="text-[9px] font-bold opacity-40">{String(t.trackNo || i + 1).padStart(2, '0')}</span>
                       <span className="font-bold truncate">{t.title}</span>
-                      <span className="text-[10px] pl-4 truncate opacity-60" style={{ color: currentIdx === i ? '#222' : '#52525b' }}>{t.artist}</span>
+                      <span className="text-[10px] pl-4 truncate opacity-40">{t.artist}</span>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); setEditingTrack(t); }} className={`p-1 opacity-0 group-hover:opacity-100 transition rounded ${currentIdx === i ? 'text-black hover:bg-zinc-200' : 'text-zinc-500 hover:text-white'}`}><Edit2 size={11} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingTrack(t); }} className={`p-1 opacity-0 group-hover:opacity-100 transition rounded ${currentIdx === i ? 'text-black hover:bg-zinc-200' : 'opacity-40 hover:opacity-100'}`}><Edit2 size={11} /></button>
                   </div>
-                )) : <div className="h-full flex items-center justify-center italic text-zinc-700 tracking-widest">Deck Workspace Stack Empty</div>}
+                )) : <div className="h-full flex items-center justify-center opacity-40 tracking-wider">The queue is completely empty. Go to your library to add songs!</div>}
               </div>
             </div>
           </div>
         ) : (
-          <div className="flex-1 p-6 flex flex-col overflow-hidden bg-black">
+          <div className="flex-1 p-6 flex flex-col overflow-hidden">
             <div className="flex justify-between items-stretch gap-4 mb-6 shrink-0">
               <div className="flex-1 flex flex-col justify-between">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-white">Archive</h2>
-                <div className="flex items-center gap-2 border border-zinc-900 bg-zinc-950 px-3 py-1.5 mt-2 max-w-md">
-                  <Search size={12} className="text-zinc-600" />
-                  <input type="text" placeholder="Fuzzy query tracks, artists, unreleased tags..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-white outline-none border-none text-[11px] font-mono" />
+                <h2 className="text-xs font-bold uppercase tracking-wider">Music Library Storage</h2>
+                <div className={`flex items-center gap-2 border ${ui.border} ${ui.secondaryBg} px-3 py-1.5 mt-2 max-w-md`}>
+                  <Search size={12} className="opacity-40" />
+                  <input type="text" placeholder="Search songs, artists, albums..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-inherit outline-none border-none text-[11px] font-mono" />
                 </div>
               </div>
               <div className="flex flex-col items-end justify-between gap-2">
                 <div className="flex gap-2 text-[9px] items-center">
-                  <span className="text-zinc-600 font-bold uppercase">Matrix Sort:</span>
-                  <button onClick={()=>setSortBy('track')} className={`px-2 py-0.5 border ${sortBy === 'track' ? 'border-white text-white font-bold' : 'border-zinc-900 text-zinc-600'}`}>Track No</button>
-                  <button onClick={()=>setSortBy('alpha')} className={`px-2 py-0.5 border ${sortBy === 'alpha' ? 'border-white text-white font-bold' : 'border-zinc-900 text-zinc-600'}`}>A-Z Title</button>
+                  <span className="opacity-40 font-bold uppercase">Sort songs by:</span>
+                  <button onClick={()=>setSortBy('track')} className={`px-2 py-0.5 border ${sortBy === 'track' ? ui.accentBorder : 'border-transparent opacity-40'}`}>Track Number</button>
+                  <button onClick={()=>setSortBy('alpha')} className={`px-2 py-0.5 border ${sortBy === 'alpha' ? ui.accentBorder : 'border-transparent opacity-40'}`}>Alphabetical</button>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={wipeLibrary} className="flex items-center gap-2 border border-zinc-900 text-zinc-500 px-4 py-1.5 hover:bg-zinc-900/50 transition text-[10px] font-bold uppercase"><Trash2 size={11}/>Clear Storage</button>
+                  <button onClick={wipeLibrary} className={`flex items-center gap-2 border ${ui.border} opacity-50 px-4 py-1.5 hover:opacity-100 transition text-[10px] font-bold uppercase`}><Trash2 size={11}/>Clear Library</button>
                   
-                  {/* THE NUKE INTERFACE LOOP CONTROL */}
-                  <button onClick={triggerNuclearLoadAll} disabled={!masterTracks.length} className="flex items-center gap-2 border border-red-600 text-red-500 px-4 py-1.5 bg-red-950/10 hover:bg-red-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-red-500 transition text-[10px] font-bold uppercase">
-                    <span>☢️</span> ALL TRACKS
+                  {/* NUCLEAR BUTTON CONTAINER ROW */}
+                  <button onClick={triggerNuclearLoadAll} disabled={!masterTracks.length} className="flex items-center gap-2 border border-red-600 text-red-500 px-4 py-1.5 bg-red-950/10 hover:bg-red-600 hover:text-white disabled:opacity-20 transition text-[10px] font-bold uppercase">
+                    <span>☢️</span> NUKE // LOAD ALL SONGS
                   </button>
 
-                  <label className="flex items-center gap-2 border border-white text-white px-5 py-1.5 cursor-pointer hover:bg-white hover:text-black transition text-[10px] font-bold uppercase">
-                    <Folder size={11}/>Import Album(s)
-                    <input type="file" multiple accept="audio/*" onChange={handleImport} className="hidden" />
-                  </label>
+                  <button onClick={handleImport} className={`flex items-center gap-2 border ${ui.accentBorder} px-5 py-1.5 transition text-[10px] font-bold uppercase`}>
+                    <Folder size={11}/>Import Music Files
+                  </button>
                 </div>
               </div>
             </div>
             
-            <div className="flex-1 border border-zinc-900 p-4 overflow-y-auto bg-black">
+            <div className={`flex-1 border ${ui.border} p-4 overflow-y-auto`}>
               {albums.length ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {albums.map((a, i) => (
-                    <div key={i} onClick={() => { setActiveQueue(a.tracks); setCurrentIdx(0); setActiveTab('playing'); setTimeout(() => executeTrackSkip(0), 25); }} className="border border-zinc-900 p-3 flex flex-col gap-3 group cursor-pointer hover:border-white transition bg-black">
-                      <div className="aspect-square border border-zinc-900 relative overflow-hidden bg-black">
-                        {a.coverArt ? <img src={a.coverArt} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-zinc-950"><Disc size={24} className="text-zinc-800"/></div>}
-                        <div className="absolute bottom-1 right-1 bg-black px-1.5 py-0.5 text-[7px] font-bold border border-zinc-900 uppercase text-zinc-500">{a.tracks.length} lines</div>
+                    <div key={i} onClick={() => { setActiveQueue(a.tracks); setCurrentIdx(0); setActiveTab('playing'); setTimeout(() => executeTrackSkip(0), 25); }} className={`border ${ui.border} p-3 flex flex-col gap-3 group cursor-pointer hover:${ui.accentBorder} transition ${ui.secondaryBg}`}>
+                      <div className={`aspect-square border ${ui.border} relative overflow-hidden bg-neutral-900`}>
+                        {a.coverArt ? <img src={a.coverArt} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Disc size={24} className="opacity-20"/></div>}
+                        <div className="absolute bottom-1 right-1 bg-black text-white px-1.5 py-0.5 text-[7px] font-bold border border-zinc-800 uppercase opacity-60">{a.tracks.length} tracks</div>
                       </div>
                       <div className="truncate">
-                        <div className="font-bold truncate text-white">{a.albumName}</div>
-                        <div className="text-[10px] truncate text-zinc-600 mt-0.5">{a.artistName}</div>
+                        <div className="font-bold truncate">{a.albumName}</div>
+                        <div className="text-[10px] truncate opacity-50 mt-0.5">{a.artistName}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="h-full flex items-center justify-center text-zinc-700 italic tracking-widest">Database Storage Filter Engine Returned Null</div>
+                <div className="h-full flex items-center justify-center opacity-30 italic tracking-widest">Your library is empty. Click Import Music Files above to load local files!</div>
               )}
             </div>
           </div>
@@ -660,56 +692,56 @@ export default function QuellqaAudio() {
       </div>
 
       {/* TRACK TIMELINE SLIDER */}
-      <div className="h-6 border-t border-zinc-900 px-4 flex items-center gap-3 bg-black">
-        <span className="text-[9px] text-zinc-500">{Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}</span>
-        <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e => { const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className="flex-1 h-1 bg-zinc-900 outline-none appearance-none cursor-pointer" />
-        <span className="text-[9px] text-zinc-500">{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
+      <div className={`h-6 border-t ${ui.border} px-4 flex items-center gap-3`}>
+        <span className="text-[9px] opacity-50">{Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}</span>
+        <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e => { const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className={`flex-1 h-1 ${ui.sliderBg} outline-none appearance-none cursor-pointer`} />
+        <span className="text-[9px] opacity-50">{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
       </div>
 
-      {/* FOOTER MASTER CONTROLS BAR WITH EMBEDDED ARTWORK */}
-      <div className="h-16 border-t border-zinc-900 flex items-center justify-between px-6 shrink-0 bg-black">
+      {/* FOOTER CONTROLS BAR */}
+      <div className={`h-16 border-t ${ui.border} flex items-center justify-between px-6 shrink-0`}>
         <div className="w-1/3 flex items-center gap-3 truncate">
           {currentIdx !== -1 && activeQueue[currentIdx] ? (
             <>
-              <div className="w-10 h-10 border border-zinc-900 bg-zinc-950 shrink-0 overflow-hidden flex items-center justify-center">
+              <div className={`w-10 h-10 border ${ui.border} shrink-0 overflow-hidden flex items-center justify-center bg-neutral-900`}>
                 {activeQueue[currentIdx].coverArt ? (
                   <img src={activeQueue[currentIdx].coverArt} className="w-full h-full object-cover" />
                 ) : (
-                  <Disc size={16} className="text-zinc-800" />
+                  <Disc size={16} className="opacity-40" />
                 )}
               </div>
               <div className="truncate">
-                <div className="text-[12px] font-bold truncate text-white">{activeQueue[currentIdx].title}</div>
-                <div className="text-[9px] mt-0.5 uppercase font-bold tracking-widest text-zinc-600 truncate">{activeQueue[currentIdx].artist} // {activeQueue[currentIdx].album}</div>
+                <div className="text-[12px] font-bold truncate">{activeQueue[currentIdx].title}</div>
+                <div className="text-[9px] mt-0.5 uppercase font-bold tracking-widest opacity-40 truncate">{activeQueue[currentIdx].artist} — {activeQueue[currentIdx].album}</div>
               </div>
             </>
           ) : (
             <>
-              <div className="w-10 h-10 border border-zinc-900 bg-zinc-950 shrink-0 flex items-center justify-center">
-                <Disc size={16} className="text-zinc-900" />
+              <div className={`w-10 h-10 border ${ui.border} shrink-0 flex items-center justify-center bg-neutral-900`}>
+                <Disc size={16} className="opacity-20" />
               </div>
-              <span className="text-[9px] font-bold tracking-widest text-zinc-700 uppercase">System Standby</span>
+              <span className="text-[9px] font-bold tracking-widest opacity-30 uppercase">No track loaded</span>
             </>
           )}
         </div>
 
         <div className="flex items-center gap-1">
-          <button onClick={() => currentIdx > 0 && executeTrackSkip(currentIdx - 1)} disabled={currentIdx <= 0} className="w-8 h-8 border border-zinc-900 flex items-center justify-center transition disabled:opacity-10 text-white hover:border-white"><SkipBack size={12} /></button>
+          <button onClick={() => currentIdx > 0 && executeTrackSkip(currentIdx - 1)} disabled={currentIdx <= 0} className={`w-8 h-8 border ${ui.border} flex items-center justify-center transition disabled:opacity-10 hover:${ui.accentBorder}`}><SkipBack size={12} /></button>
           <button onClick={() => { 
             const activeAudio = activeDeckRef.current === 'A' ? audioARef.current! : audioBRef.current!;
             if(isPlaying){ activeAudio.pause(); setIsPlaying(false); } else if(activeQueue.length){ activeAudio.play().catch(()=>{}); setIsPlaying(true); } 
-          }} className="w-10 h-8 border border-zinc-900 flex items-center justify-center transition text-white hover:border-white">{isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}</button>
-          <button onClick={() => currentIdx < activeQueue.length - 1 && executeTrackSkip(currentIdx + 1)} disabled={currentIdx === -1 || currentIdx >= activeQueue.length - 1} className="w-8 h-8 border border-zinc-900 flex items-center justify-center transition disabled:opacity-10 text-white hover:border-white"><SkipForward size={12} /></button>
-          <button onClick={() => setIsLooping(!isLooping)} className="w-8 h-8 border flex items-center justify-center transition ml-2" style={{ backgroundColor: isLooping ? '#ffffff' : 'transparent', color: isLooping ? '#000000' : '#52525b', borderColor: isLooping ? 'transparent' : '#1f1f23' }}><Repeat size={12} /></button>
+          }} className={`w-10 h-8 border ${ui.border} flex items-center justify-center transition hover:${ui.accentBorder}`}>{isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}</button>
+          <button onClick={() => currentIdx < activeQueue.length - 1 && executeTrackSkip(currentIdx + 1)} disabled={currentIdx === -1 || currentIdx >= activeQueue.length - 1} className={`w-8 h-8 border ${ui.border} flex items-center justify-center transition disabled:opacity-10 hover:${ui.accentBorder}`}><SkipForward size={12} /></button>
+          <button onClick={() => setIsLooping(!isLooping)} className="w-8 h-8 border flex items-center justify-center transition ml-2" style={{ backgroundColor: isLooping ? ui.primaryHex : 'transparent', color: isLooping ? (currentTheme === 'light' ? '#fff' : '#000') : 'inherit', borderColor: isLooping ? 'transparent' : 'rgba(120,120,120,0.2)' }}><Repeat size={12} /></button>
         </div>
 
         <div className="w-1/3 flex items-center justify-end gap-3">
-          <div className="flex items-center gap-2 border border-zinc-900 px-3 py-1 bg-black">
-            <Volume2 size={11} className="text-zinc-600" />
-            <input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(parseFloat(e.target.value))} className="w-14 h-1 bg-zinc-900 outline-none appearance-none cursor-pointer" />
-            <span className="text-[9px] font-bold font-mono min-w-6 text-right text-zinc-400">{Math.round(volume * 100)}%</span>
+          <div className={`flex items-center gap-2 border ${ui.border} px-3 py-1`}>
+            <Volume2 size={11} className="opacity-40" />
+            <input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(parseFloat(e.target.value))} className={`w-14 h-1 ${ui.sliderBg} outline-none appearance-none cursor-pointer`} />
+            <span className="text-[9px] font-bold font-mono min-w-6 text-right opacity-60">{Math.round(volume * 100)}%</span>
           </div>
-          <div className="text-[10px] font-bold tracking-widest pl-3 border-l border-zinc-900 text-zinc-600">{activeQueue.length ? `[${currentIdx + 1}/${activeQueue.length}]` : '[0/0]'}</div>
+          <div className={`text-[10px] font-bold tracking-widest pl-3 border-l ${ui.border} opacity-40`}>{activeQueue.length ? `[${currentIdx + 1}/${activeQueue.length}]` : '[0/0]'}</div>
         </div>
       </div>
     </div>
