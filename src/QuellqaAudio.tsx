@@ -8,7 +8,7 @@ interface Track {
   artist: string;
   album: string;
   trackNo: number;
-  url: string; // Restarts fallback pointer
+  url: string; // Contains direct base64 audio payload string
   coverArt: string; 
 }
 
@@ -20,56 +20,6 @@ interface AlbumGroup {
 }
 
 type ThemeName = 'industrial' | 'lean' | 'red' | 'gloop' | 'light';
-
-const DB_NAME = "QuellqaArchivalDB";
-const STORE_NAME = "tracks";
-
-const initIndexedDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "id" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const saveTracksToDB = async (tracks: Track[]): Promise<void> => {
-  const db = await initIndexedDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    tracks.forEach(track => store.put(track));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-};
-
-const getTracksFromDB = async (): Promise<Track[]> => {
-  const db = await initIndexedDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readonly");
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const clearDBStore = async (): Promise<void> => {
-  const db = await initIndexedDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    store.clear();
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-};
 
 export default function QuellqaAudio() {
   const [activeTab, setActiveTab] = useState<'playing' | 'library'>('library');
@@ -120,7 +70,6 @@ export default function QuellqaAudio() {
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Theme profiles configurations
   const themes = {
     industrial: { bg: 'bg-black', text: 'text-white', border: 'border-zinc-900', secondaryBg: 'bg-zinc-950', accentText: 'text-zinc-400', accentBorder: 'border-white', primaryHex: '#ffffff', sliderBg: 'bg-zinc-900' },
     lean: { bg: 'bg-neutral-950', text: 'text-fuchsia-100', border: 'border-purple-950/60', secondaryBg: 'bg-purple-950/20', accentText: 'text-purple-400', accentBorder: 'border-fuchsia-500', primaryHex: '#d946ef', sliderBg: 'bg-purple-950/50' },
@@ -130,11 +79,6 @@ export default function QuellqaAudio() {
   };
   const ui = themes[currentTheme];
 
-  useEffect(() => {
-    getTracksFromDB().then(tracks => { setMasterTracks(tracks); }).catch(() => {});
-  }, []);
-
-  // Listen to Electron global media key commands safely 
   useEffect(() => {
     try {
       const { ipcRenderer } = window.require('electron');
@@ -158,37 +102,32 @@ export default function QuellqaAudio() {
     if (currentIdx !== -1 && activeQueue[currentIdx]) {
       const currentTrack = activeQueue[currentIdx];
       document.title = `${currentTrack.title} — ${currentTrack.artist}`;
-      
       try {
         const { ipcRenderer } = window.require('electron');
         ipcRenderer.send('sync-native-media', { title: currentTrack.title, artist: currentTrack.artist, isPlaying });
         ipcRenderer.send('update-rpc', { title: currentTrack.title, artist: currentTrack.artist, album: currentTrack.album, isPlaying });
       } catch(e) {}
     } else {
-      document.title = "Quellqa Version X";
+      document.title = "Quellqa VERSION X";
       try { window.require('electron').ipcRenderer.send('update-rpc', null); } catch(e) {}
     }
   }, [currentIdx, activeQueue, isPlaying]);
 
   const initAudioGraph = () => {
     if (audioCtxRef.current) return;
-    
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioCtxRef.current = ctx;
 
     const srcA = ctx.createMediaElementSource(audioARef.current!);
     const srcB = ctx.createMediaElementSource(audioBRef.current!);
 
-    const gainA = ctx.createGain();
-    const gainB = ctx.createGain();
+    const gainA = ctx.createGain(); const gainB = ctx.createGain();
     gainANodeRef.current = gainA; gainBNodeRef.current = gainB;
 
-    const p = ctx.createGain();
-    const panner = ctx.createStereoPanner();
+    const p = ctx.createGain(); const panner = ctx.createStereoPanner();
     pannerNodeRef.current = panner;
 
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 64; 
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 64;
     analyserNodeRef.current = analyser;
 
     const eqSub = ctx.createBiquadFilter(); eqSub.type = 'lowshelf'; eqSub.frequency.value = 60;
@@ -197,28 +136,12 @@ export default function QuellqaAudio() {
     const eqHighMid = ctx.createBiquadFilter(); eqHighMid.type = 'peaking'; eqHighMid.frequency.value = 4000;
     const eqTreb = ctx.createBiquadFilter(); eqTreb.type = 'highshelf'; eqTreb.frequency.value = 14000;
 
-    srcA.connect(gainA).connect(p);
-    srcB.connect(gainB).connect(p);
-    
-    p.connect(panner)
-     .connect(eqSub)
-     .connect(eqLowMid)
-     .connect(eqMid)
-     .connect(eqHighMid)
-     .connect(eqTreb)
-     .connect(analyser)
-     .connect(ctx.destination);
+    srcA.connect(gainA).connect(p); srcB.connect(gainB).connect(p);
+    p.connect(panner).connect(eqSub).connect(eqLowMid).connect(eqMid).connect(eqHighMid).connect(eqTreb).connect(analyser).connect(ctx.destination);
 
-    preampNodeRef.current = p; 
-    subNodeRef.current = eqSub; lowMidNodeRef.current = eqLowMid; 
-    midNodeRef.current = eqMid; highMidNodeRef.current = eqHighMid; 
-    trebNodeRef.current = eqTreb;
-    
-    gainA.gain.value = volume;
-    gainB.gain.value = 0;
-    
-    updateDsp();
-    startCanvasRenderLoop();
+    preampNodeRef.current = p; subNodeRef.current = eqSub; lowMidNodeRef.current = eqLowMid; midNodeRef.current = eqMid; highMidNodeRef.current = eqHighMid; trebNodeRef.current = eqTreb;
+    gainA.gain.value = volume; gainB.gain.value = 0;
+    updateDsp(); startCanvasRenderLoop();
   };
 
   const updateDsp = () => {
@@ -229,7 +152,6 @@ export default function QuellqaAudio() {
     midNodeRef.current?.gain.setValueAtTime(mid, now);
     highMidNodeRef.current?.gain.setValueAtTime(highMid, now);
     trebNodeRef.current?.gain.setValueAtTime(treble, now);
-
     if (pannerNodeRef.current) pannerNodeRef.current.pan.setValueAtTime(stereoPan, now);
     if (audioARef.current) audioARef.current.playbackRate = pitchRate;
     if (audioBRef.current) audioBRef.current.playbackRate = pitchRate;
@@ -240,11 +162,9 @@ export default function QuellqaAudio() {
     if (!audioCtxRef.current) return;
     const now = audioCtxRef.current.currentTime;
     if (activeDeckRef.current === 'A' && !isTransitioningRef.current) {
-      gainANodeRef.current?.gain.setValueAtTime(volume, now);
-      gainBNodeRef.current?.gain.setValueAtTime(0, now);
+      gainANodeRef.current?.gain.setValueAtTime(volume, now); gainBNodeRef.current?.gain.setValueAtTime(0, now);
     } else if (activeDeckRef.current === 'B' && !isTransitioningRef.current) {
-      gainBNodeRef.current?.gain.setValueAtTime(volume, now);
-      gainANodeRef.current?.gain.setValueAtTime(0, now);
+      gainBNodeRef.current?.gain.setValueAtTime(volume, now); gainANodeRef.current?.gain.setValueAtTime(0, now);
     }
   }, [volume]);
 
@@ -252,7 +172,6 @@ export default function QuellqaAudio() {
     const handleTimeUpdate = () => {
       const activeAudio = activeDeckRef.current === 'A' ? audioARef.current : audioBRef.current;
       if (!activeAudio || isTransitioningRef.current) return;
-
       setCurrentTime(activeAudio.currentTime);
       setDuration(activeAudio.duration || 0);
 
@@ -261,26 +180,17 @@ export default function QuellqaAudio() {
         triggerLinearCrossfade();
       }
     };
-
     const handleEnded = () => {
       if (currentIdx === activeQueue.length - 1) {
-        if (isLooping) executeTrackSkip(0);
-        else setIsPlaying(false);
+        if (isLooping) executeTrackSkip(0); else setIsPlaying(false);
       }
     };
-
-    const aElement = audioARef.current;
-    const bElement = audioBRef.current;
-    aElement?.addEventListener('timeupdate', handleTimeUpdate);
-    bElement?.addEventListener('timeupdate', handleTimeUpdate);
-    aElement?.addEventListener('ended', handleEnded);
-    bElement?.addEventListener('ended', handleEnded);
-
+    const aElement = audioARef.current; const bElement = audioBRef.current;
+    aElement?.addEventListener('timeupdate', handleTimeUpdate); bElement?.addEventListener('timeupdate', handleTimeUpdate);
+    aElement?.addEventListener('ended', handleEnded); bElement?.addEventListener('ended', handleEnded);
     return () => {
-      aElement?.removeEventListener('timeupdate', handleTimeUpdate);
-      bElement?.removeEventListener('timeupdate', handleTimeUpdate);
-      aElement?.removeEventListener('ended', handleEnded);
-      bElement?.removeEventListener('ended', handleEnded);
+      aElement?.removeEventListener('timeupdate', handleTimeUpdate); bElement?.removeEventListener('timeupdate', handleTimeUpdate);
+      aElement?.removeEventListener('ended', handleEnded); bElement?.removeEventListener('ended', handleEnded);
     };
   }, [currentIdx, activeQueue, isLooping, crossfadeDuration]);
 
@@ -300,31 +210,19 @@ export default function QuellqaAudio() {
     incomingAudio.src = activeQueue[nextIdx].url;
     incomingAudio.playbackRate = pitchRate;
     incomingGain.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
-    
-    setIsPlaying(true); 
-    incomingAudio.play().catch(() => {});
+    setIsPlaying(true); incomingAudio.play().catch(() => {});
 
     const now = audioCtxRef.current.currentTime;
-    outgoingGain.gain.setValueAtTime(volume, now);
-    outgoingGain.gain.linearRampToValueAtTime(0, now + crossfadeDuration);
+    outgoingGain.gain.setValueAtTime(volume, now); outgoingGain.gain.linearRampToValueAtTime(0, now + crossfadeDuration);
+    incomingGain.gain.setValueAtTime(0, now); incomingGain.gain.linearRampToValueAtTime(volume, now + crossfadeDuration);
 
-    incomingGain.gain.setValueAtTime(0, now);
-    incomingGain.gain.linearRampToValueAtTime(volume, now + crossfadeDuration);
-
-    setCurrentIdx(nextIdx);
-    activeDeckRef.current = nextDeck;
-
-    setTimeout(() => {
-      outgoingAudio.pause();
-      outgoingAudio.src = "";
-      isTransitioningRef.current = false;
-    }, crossfadeDuration * 1000);
+    setCurrentIdx(nextIdx); activeDeckRef.current = nextDeck;
+    setTimeout(() => { outgoingAudio.pause(); outgoingAudio.src = ""; isTransitioningRef.current = false; }, crossfadeDuration * 1000);
   };
 
   const executeTrackSkip = (targetIdx: number) => {
     if (!activeQueue[targetIdx]) return;
     initAudioGraph();
-
     isTransitioningRef.current = false;
     const now = audioCtxRef.current!.currentTime;
 
@@ -333,101 +231,62 @@ export default function QuellqaAudio() {
     const activeGain = activeDeckRef.current === 'A' ? gainANodeRef.current! : gainBNodeRef.current!;
     const inactiveGain = activeDeckRef.current === 'A' ? gainBNodeRef.current! : gainANodeRef.current!;
 
-    inactiveAudio.pause(); inactiveAudio.src = "";
-    inactiveGain.gain.setValueAtTime(0, now);
-
+    inactiveAudio.pause(); inactiveAudio.src = ""; inactiveGain.gain.setValueAtTime(0, now);
     activeGain.gain.setValueAtTime(volume, now);
     activeAudio.src = activeQueue[targetIdx].url;
     activeAudio.playbackRate = pitchRate;
-    
-    setIsPlaying(true);
-    activeAudio.play().catch(() => {});
+    setIsPlaying(true); activeAudio.play().catch(() => {});
     setCurrentIdx(targetIdx);
   };
 
   const startCanvasRenderLoop = () => {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    const canvas = canvasRef.current;
-    const analyser = analyserNodeRef.current;
+    const canvas = canvasRef.current; const analyser = analyserNodeRef.current;
     if (!canvas || !analyser) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const bufferLength = analyser.frequencyBinCount; const dataArray = new Uint8Array(bufferLength);
 
     const render = () => {
       animationFrameRef.current = requestAnimationFrame(render);
       analyser.getByteFrequencyData(dataArray);
-      
-      ctx.fillStyle = currentTheme === 'light' ? '#f5f5f4' : '#000000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      const barWidth = (canvas.width / bufferLength) * 1.25;
-      let barHeight; let x = 0;
-
+      ctx.fillStyle = currentTheme === 'light' ? '#f5f5f4' : '#000000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const barWidth = (canvas.width / bufferLength) * 1.25; let barHeight; let x = 0;
       for (let i = 0; i < bufferLength; i++) {
-        barHeight = dataArray[i] * 0.45;
-        ctx.fillStyle = ui.primaryHex;
-        ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
-        x += barWidth;
+        barHeight = dataArray[i] * 0.45; ctx.fillStyle = ui.primaryHex;
+        ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight); x += barWidth;
       }
     };
     render();
   };
   useEffect(() => { startCanvasRenderLoop(); }, [currentTheme]);
 
-  const applyMetadataOverride = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingTrack) return;
-
-    const updatedMaster = masterTracks.map(t => t.id === editingTrack.id ? editingTrack : t);
-    setMasterTracks(updatedMaster);
-    const updatedQueue = activeQueue.map(t => t.id === editingTrack.id ? editingTrack : t);
-    setActiveQueue(updatedQueue);
-
-    await saveTracksToDB([editingTrack]);
+  const applyMetadataOverride = (e: React.FormEvent) => {
+    e.preventDefault(); if (!editingTrack) return;
+    setMasterTracks(masterTracks.map(t => t.id === editingTrack.id ? editingTrack : t));
+    setActiveQueue(activeQueue.map(t => t.id === editingTrack.id ? editingTrack : t));
     setEditingTrack(null);
   };
 
   const triggerNuclearLoadAll = () => {
     if (!masterTracks.length) return;
-    const flatQueue = [...masterTracks].sort((x, y) => {
-      if (sortBy === 'alpha') return x.title.localeCompare(y.title);
-      return x.trackNo - y.trackNo;
-    });
-    setActiveQueue(flatQueue);
-    setCurrentIdx(0);
-    setActiveTab('playing');
+    const flatQueue = [...masterTracks].sort((x, y) => sortBy === 'alpha' ? x.title.localeCompare(y.title) : x.trackNo - y.trackNo);
+    setActiveQueue(flatQueue); setCurrentIdx(0); setActiveTab('playing');
     setTimeout(() => executeTrackSkip(0), 40);
   };
 
   const albums: AlbumGroup[] = React.useMemo(() => {
     const map: { [key: string]: AlbumGroup } = {};
     const query = searchQuery.toLowerCase().trim();
-    const filtered = masterTracks.filter(t => 
-      t.title.toLowerCase().includes(query) || 
-      t.artist.toLowerCase().includes(query) || 
-      t.album.toLowerCase().includes(query)
-    );
+    const filtered = masterTracks.filter(t => t.title.toLowerCase().includes(query) || t.artist.toLowerCase().includes(query) || t.album.toLowerCase().includes(query));
 
     filtered.forEach(t => {
       const key = (t.album || "Unknown").toLowerCase().trim();
       if (!map[key]) map[key] = { albumName: t.album, artistName: t.artist, coverArt: t.coverArt, tracks: [] };
       map[key].tracks.push(t);
     });
-
-    return Object.values(map).map(a => ({
-      ...a,
-      tracks: a.tracks.sort((x, y) => {
-        if (sortBy === 'alpha') return x.title.localeCompare(y.title);
-        return x.trackNo - y.trackNo;
-      })
-    }));
+    return Object.values(map).map(a => ({ ...a, tracks: a.tracks.sort((x, y) => sortBy === 'alpha' ? x.title.localeCompare(y.title) : x.trackNo - y.trackNo) }));
   }, [masterTracks, searchQuery, sortBy]);
 
-  // Restarts Safe Local Stream Importer
   const handleImport = async () => {
     try {
       const { ipcRenderer } = window.require('electron');
@@ -436,70 +295,43 @@ export default function QuellqaAudio() {
 
       const news: Track[] = [];
       for (let file of files) {
-        const response = await fetch(file.nativeUrl);
-        const blob = await response.blob();
-        const meta = await musicMetadata.parseBlob(blob);
-        let art = "";
-        if (meta.common.picture?.[0]) {
-          const pic = meta.common.picture[0];
-          art = `data:${pic.format};base64,${btoa(pic.data.reduce((d, b) => d + String.fromCharCode(b), ''))}`;
-        }
+        let title = file.name; let artist = "Unknown Artist"; let album = "Unknown Album"; let trackNo = 0; let art = "";
+        
+        try {
+          // Decode internal file array metadata headers via local base64 allocation string safely
+          const response = await fetch(file.audioDataUrl);
+          const blob = await response.blob();
+          const meta = await musicMetadata.parseBlob(blob);
+          if (meta.common) {
+            title = meta.common.title || title;
+            artist = meta.common.artist || artist;
+            album = meta.common.album || album;
+            trackNo = meta.common.track.no || trackNo;
+            if (meta.common.picture?.[0]) {
+              const pic = meta.common.picture[0];
+              art = `data:${pic.format};base64,${btoa(pic.data.reduce((d, b) => d + String.fromCharCode(b), ''))}`;
+            }
+          }
+        } catch (e) {}
 
-        news.push({
-          id: Date.now() + Math.random(),
-          title: meta.common.title || file.name,
-          artist: meta.common.artist || "Unknown Artist",
-          album: meta.common.album || "Unknown Album",
-          trackNo: meta.common.track.no || 0,
-          url: file.nativeUrl, // Absolute stream address safely mapped across session restarts
-          coverArt: art
-        });
+        news.push({ id: Date.now() + Math.random(), title, artist, album, trackNo, url: file.audioDataUrl, coverArt: art });
       }
-
-      const globalPlaylist = [...masterTracks, ...news];
-      setMasterTracks(globalPlaylist);
-      await saveTracksToDB(news);
-    } catch (err) {
-      console.error("Local load chain aborted: ", err);
-    }
-  };
-
-  const wipeLibrary = async () => {
-    setMasterTracks([]); setActiveQueue([]); setCurrentIdx(-1); setIsPlaying(false);
-    await clearDBStore();
+      setMasterTracks([...masterTracks, ...news]);
+    } catch (err) {}
   };
 
   return (
     <div className={`flex flex-col h-screen font-mono text-[11px] tracking-tight ${ui.bg} ${ui.text} selection:bg-neutral-800 transition-colors duration-200`}>
       <style>{`
-        input[type="range"][orient="vertical"] {
-          writing-mode: vertical-lr;
-          direction: rtl;
-          appearance: slider-vertical;
-          width: 12px;
-          height: 96px;
-          background: transparent;
-        }
-        input[type="range"]:not([orient="vertical"])[type="range"]::-webkit-slider-thumb { 
-          -webkit-appearance: none; appearance: none; width: 8px; height: 12px; 
-          background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; 
-        }
-        input[type="range"]:not([orient="vertical"])[type="range"]::-moz-range-thumb { 
-          width: 8px; height: 12px; background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; border: none; 
-        }
-        input[type="range"][orient="vertical"]::-webkit-slider-thumb {
-          -webkit-appearance: none; appearance: none; width: 12px; height: 8px;
-          background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px;
-        }
-        input[type="range"][orient="vertical"]::-moz-range-thumb {
-          width: 12px; height: 8px; background: ${ui.primaryHex}; cursor: pointer; border-radius: 0px; border: none;
-        }
+        input[type="range"][orient="vertical"] { writing-mode: vertical-lr; direction: rtl; appearance: slider-vertical; width: 12px; height: 96px; background: transparent; }
+        input[type="range"]:not([orient="vertical"])[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 8px; height: 12px; background: ${ui.primaryHex}; cursor: pointer; }
+        input[type="range"]:not([orient="vertical"])[type="range"]::-moz-range-thumb { width: 8px; height: 12px; background: ${ui.primaryHex}; cursor: pointer; border: none; }
+        input[type="range"][orient="vertical"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 8px; background: ${ui.primaryHex}; cursor: pointer; }
+        input[type="range"][orient="vertical"]::-moz-range-thumb { width: 12px; height: 8px; background: ${ui.primaryHex}; cursor: pointer; border: none; }
       `}</style>
 
-      <audio ref={audioARef} crossOrigin="anonymous" />
-      <audio ref={audioBRef} crossOrigin="anonymous" />
+      <audio ref={audioARef} crossOrigin="anonymous" /> <audio ref={audioBRef} crossOrigin="anonymous" />
       
-      {/* HEADER OPERATIONS PANEL */}
       <div className={`h-10 border-b ${ui.border} flex items-center justify-between px-4 titlebar-drag shrink-0`}>
         <div className="flex gap-2 titlebar-nodrag">
           <div onClick={() => window.require('electron').ipcRenderer.send('window-control', 'close')} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-red-600 transition cursor-pointer" />
@@ -509,8 +341,6 @@ export default function QuellqaAudio() {
           <button onClick={() => setActiveTab('playing')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'playing' ? ui.text : 'opacity-40'}`}><Radio size={12}/>Player Studio</button>
           <button onClick={() => setActiveTab('library')} className={`flex items-center gap-1.5 uppercase transition ${activeTab === 'library' ? ui.text : 'opacity-40'}`}><Library size={12}/>Music Library</button>
         </div>
-        
-        {/* PREMADE CUSTOM THEME SELECTOR SEED */}
         <div className="flex items-center gap-2 titlebar-nodrag">
           <Palette size={11} className="opacity-40" />
           <select value={currentTheme} onChange={e=>setCurrentTheme(e.target.value as ThemeName)} className={`bg-transparent outline-none border ${ui.border} text-[9px] font-bold uppercase p-0.5 px-1 cursor-pointer`}>
@@ -528,7 +358,7 @@ export default function QuellqaAudio() {
         {editingTrack && (
           <div className="absolute inset-0 bg-black bg-opacity-90 z-50 p-8 flex items-center justify-center">
             <form onSubmit={applyMetadataOverride} className={`w-full max-w-sm border ${ui.border} p-6 flex flex-col gap-4 bg-zinc-950 text-white`}>
-              <span className="text-[10px] font-bold tracking-widest uppercase opacity-60">Edit Song Information</span>
+              <span className="text-[10px] font-bold uppercase opacity-60">Edit Song Information</span>
               <div className="flex flex-col gap-1">
                 <label className="text-[9px] opacity-40 uppercase font-bold">Song Title</label>
                 <input type="text" value={editingTrack.title} onChange={e=>setEditingTrack({...editingTrack, title: e.target.value})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
@@ -540,10 +370,6 @@ export default function QuellqaAudio() {
               <div className="flex flex-col gap-1">
                 <label className="text-[9px] opacity-40 uppercase font-bold">Album Name</label>
                 <input type="text" value={editingTrack.album} onChange={e=>setEditingTrack({...editingTrack, album: e.target.value})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[9px] opacity-40 uppercase font-bold">Track Number</label>
-                <input type="number" value={editingTrack.trackNo} onChange={e=>setEditingTrack({...editingTrack, trackNo: parseInt(e.target.value) || 0})} className="bg-black border border-zinc-800 p-2 text-white outline-none" required />
               </div>
               <div className="flex gap-2 mt-2">
                 <button type="button" onClick={()=>setEditingTrack(null)} className="w-1/2 border border-zinc-800 py-2 font-bold uppercase opacity-50 hover:opacity-100 transition">Cancel</button>
@@ -567,35 +393,15 @@ export default function QuellqaAudio() {
                     <div className={`flex justify-between text-[8px] font-bold ${ui.accentText} mb-1`}><span>CROSSFADE TIME</span><span>{crossfadeDuration} seconds</span></div>
                     <input type="range" min="0" max="15" step="1" value={crossfadeDuration} onChange={e=>setCrossfadeDuration(parseInt(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
                   </div>
-                  <div>
-                    <div className={`flex justify-between text-[8px] font-bold ${ui.accentText} mb-1`}><span>STEREO BALANCE</span><span>{stereoPan === 0 ? 'CENTER' : stereoPan < 0 ? `LEFT ${Math.abs(Math.round(stereoPan * 100))}%` : `RIGHT ${Math.round(stereoPan * 100)}%`}</span></div>
-                    <input type="range" min="-1.0" max="1.0" step="0.02" value={stereoPan} onChange={e=>setStereoPan(parseFloat(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
-                  </div>
                 </div>
 
-                {/* HARDWARE EQ SLIDERS COMPONENT - OVERDRIVEN ±32 RANGE */}
                 <div className={`h-40 border ${ui.border} p-3 flex justify-between ${ui.secondaryBg}`}>
                   {[
-                    { label: '60Hz', v: subBass, s: setSubBass },
-                    { label: '230Hz', v: lowMid, s: setLowMid },
-                    { label: '910Hz', v: mid, s: setMid },
-                    { label: '4kHz', v: highMid, s: setHighMid },
-                    { label: '14kHz', v: treble, s: setTreble }
+                    { label: '60Hz', v: subBass, s: setSubBass }, { label: '230Hz', v: lowMid, s: setLowMid }, { label: '910Hz', v: mid, s: setMid }, { label: '4kHz', v: highMid, s: setHighMid }, { label: '14kHz', v: treble, s: setTreble }
                   ].map((c, i) => (
                     <div key={i} className="flex flex-col items-center justify-between w-1/5 h-full">
                       <span className="text-[8px] font-bold opacity-70 h-3">{c.v > 0 ? `+${c.v}` : c.v}</span>
-                      <div className="flex-1 flex items-center justify-center my-1">
-                        <input 
-                          type="range" 
-                          min="-32" 
-                          max="32" 
-                          step="1" 
-                          value={c.v} 
-                          orient="vertical" 
-                          onChange={e => c.s(parseFloat(e.target.value))} 
-                          className="outline-none accent-white" 
-                        />
-                      </div>
+                      <div className="flex-1 flex items-center justify-center my-1"><input type="range" min="-32" max="32" step="1" value={c.v} orient="vertical" onChange={e => c.s(parseFloat(e.target.value))} className="outline-none" /></div>
                       <span className="text-[7px] font-bold opacity-40 tracking-tighter h-3">{c.label}</span>
                     </div>
                   ))}
@@ -604,12 +410,9 @@ export default function QuellqaAudio() {
 
               <div className="flex flex-col gap-2 py-3 my-2">
                 <span className="text-[8px] font-bold tracking-widest opacity-50 uppercase">Visualiser</span>
-                <div className={`w-full h-16 border ${ui.border} relative overflow-hidden`}>
-                  <canvas ref={canvasRef} width="222" height="64" className="w-full h-full block" />
-                </div>
+                <div className={`w-full h-16 border ${ui.border} relative overflow-hidden`}><canvas ref={canvasRef} width="222" height="64" className="w-full h-full block" /></div>
               </div>
 
-              {/* OVERDRIVEN PRE-AMP GAIN STAGE (±32) */}
               <div className={`border ${ui.border} p-3 ${ui.secondaryBg}`}>
                 <div className="flex justify-between text-[9px] font-bold opacity-70 mb-1"><span>PRE-AMP GAIN</span><span>{preamp > 0 ? `+${preamp}` : preamp} dB</span></div>
                 <input type="range" min="-32" max="32" step="0.5" value={preamp} onChange={e => setPreamp(parseFloat(e.target.value))} className={`w-full h-1 ${ui.sliderBg} outline-none appearance-none`} />
@@ -620,19 +423,15 @@ export default function QuellqaAudio() {
               <span className="text-[10px] font-bold uppercase mb-3 tracking-widest opacity-40">Current Playing Queue</span>
               <div className={`flex-1 border ${ui.border} overflow-y-auto`}>
                 {activeQueue.length ? activeQueue.map((t, i) => (
-                  <div 
-                    key={i} 
-                    className={`flex items-center justify-between p-3 border-b ${ui.border} cursor-pointer transition group`} 
-                    style={{ backgroundColor: currentIdx === i ? ui.primaryHex : 'transparent', color: currentIdx === i ? (currentTheme === 'light' ? '#ffffff' : '#000000') : 'inherit' }}
-                  >
+                  <div key={i} className={`flex items-center justify-between p-3 border-b ${ui.border} cursor-pointer transition group`} style={{ backgroundColor: currentIdx === i ? ui.primaryHex : 'transparent', color: currentIdx === i ? (currentTheme === 'light' ? '#000' : '#000') : 'inherit' }}>
                     <div onClick={() => executeTrackSkip(i)} className="flex-1 flex items-center gap-4 truncate">
                       <span className="text-[9px] font-bold opacity-40">{String(t.trackNo || i + 1).padStart(2, '0')}</span>
                       <span className="font-bold truncate">{t.title}</span>
                       <span className="text-[10px] pl-4 truncate opacity-40">{t.artist}</span>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); setEditingTrack(t); }} className={`p-1 opacity-0 group-hover:opacity-100 transition rounded ${currentIdx === i ? 'text-black hover:bg-zinc-200' : 'opacity-40 hover:opacity-100'}`}><Edit2 size={11} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingTrack(t); }} className="p-1 opacity-0 group-hover:opacity-100 transition"><Edit2 size={11} /></button>
                   </div>
-                )) : <div className="h-full flex items-center justify-center opacity-40 tracking-wider">The queue is completely empty. Go to your library to add songs!</div>}
+                )) : <div className="h-full flex items-center justify-center opacity-40 tracking-wider p-4 text-center">The queue is completely empty. Go to your library to add songs!</div>}
               </div>
             </div>
           </div>
@@ -643,26 +442,14 @@ export default function QuellqaAudio() {
                 <h2 className="text-xs font-bold uppercase tracking-wider">Music Library Storage</h2>
                 <div className={`flex items-center gap-2 border ${ui.border} ${ui.secondaryBg} px-3 py-1.5 mt-2 max-w-md`}>
                   <Search size={12} className="opacity-40" />
-                  <input type="text" placeholder="Search songs, artists, albums..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-inherit outline-none border-none text-[11px] font-mono" />
+                  <input type="text" placeholder="Search songs, artists, albums..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-transparent flex-1 text-inherit outline-none text-[11px] font-mono" />
                 </div>
               </div>
               <div className="flex flex-col items-end justify-between gap-2">
-                <div className="flex gap-2 text-[9px] items-center">
-                  <span className="opacity-40 font-bold uppercase">Sort songs by:</span>
-                  <button onClick={()=>setSortBy('track')} className={`px-2 py-0.5 border ${sortBy === 'track' ? ui.accentBorder : 'border-transparent opacity-40'}`}>Track Number</button>
-                  <button onClick={()=>setSortBy('alpha')} className={`px-2 py-0.5 border ${sortBy === 'alpha' ? ui.accentBorder : 'border-transparent opacity-40'}`}>Alphabetical</button>
-                </div>
                 <div className="flex gap-2">
-                  <button onClick={wipeLibrary} className={`flex items-center gap-2 border ${ui.border} opacity-50 px-4 py-1.5 hover:opacity-100 transition text-[10px] font-bold uppercase`}><Trash2 size={11}/>Clear Library</button>
-                  
-                  {/* NUCLEAR BUTTON CONTAINER ROW */}
-                  <button onClick={triggerNuclearLoadAll} disabled={!masterTracks.length} className="flex items-center gap-2 border border-red-600 text-red-500 px-4 py-1.5 bg-red-950/10 hover:bg-red-600 hover:text-white disabled:opacity-20 transition text-[10px] font-bold uppercase">
-                    <span>☢️</span> NUKE // LOAD ALL SONGS
-                  </button>
-
-                  <button onClick={handleImport} className={`flex items-center gap-2 border ${ui.accentBorder} px-5 py-1.5 transition text-[10px] font-bold uppercase`}>
-                    <Folder size={11}/>Import Music Files
-                  </button>
+                  <button onClick={() => setMasterTracks([])} className={`flex items-center gap-2 border ${ui.border} opacity-50 px-4 py-1.5 hover:opacity-100 transition text-[10px] font-bold uppercase`}><Trash2 size={11}/>Clear Library</button>
+                  <button onClick={triggerNuclearLoadAll} disabled={!masterTracks.length} className="flex items-center gap-2 border border-red-600 text-red-500 px-4 py-1.5 bg-red-950/10 hover:bg-red-600 hover:text-white disabled:opacity-20 transition text-[10px] font-bold uppercase">☢️ NUKE // LOAD ALL SONGS</button>
+                  <button onClick={handleImport} className={`flex items-center gap-2 border ${ui.accentBorder} px-5 py-1.5 transition text-[10px] font-bold uppercase`}><Folder size={11}/>Import Music Files</button>
                 </div>
               </div>
             </div>
@@ -684,31 +471,25 @@ export default function QuellqaAudio() {
                   ))}
                 </div>
               ) : (
-                <div className="h-full flex items-center justify-center opacity-30 italic tracking-widest">Your library is empty. Click Import Music Files above to load local files!</div>
+                <div className="h-full flex items-center justify-center opacity-30 italic tracking-widest text-center p-4">Your library is empty. Click Import Music Files above to load local files!</div>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* TRACK TIMELINE SLIDER */}
       <div className={`h-6 border-t ${ui.border} px-4 flex items-center gap-3`}>
         <span className="text-[9px] opacity-50">{Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')}</span>
         <input type="range" min="0" max={duration || 100} value={currentTime} onChange={e => { const val = parseFloat(e.target.value); if(activeDeckRef.current === 'A') audioARef.current!.currentTime = val; else audioBRef.current!.currentTime = val; }} className={`flex-1 h-1 ${ui.sliderBg} outline-none appearance-none cursor-pointer`} />
         <span className="text-[9px] opacity-50">{Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}</span>
       </div>
 
-      {/* FOOTER CONTROLS BAR */}
       <div className={`h-16 border-t ${ui.border} flex items-center justify-between px-6 shrink-0`}>
         <div className="w-1/3 flex items-center gap-3 truncate">
           {currentIdx !== -1 && activeQueue[currentIdx] ? (
             <>
               <div className={`w-10 h-10 border ${ui.border} shrink-0 overflow-hidden flex items-center justify-center bg-neutral-900`}>
-                {activeQueue[currentIdx].coverArt ? (
-                  <img src={activeQueue[currentIdx].coverArt} className="w-full h-full object-cover" />
-                ) : (
-                  <Disc size={16} className="opacity-40" />
-                )}
+                {activeQueue[currentIdx].coverArt ? <img src={activeQueue[currentIdx].coverArt} className="w-full h-full object-cover" /> : <Disc size={16} className="opacity-40" />}
               </div>
               <div className="truncate">
                 <div className="text-[12px] font-bold truncate">{activeQueue[currentIdx].title}</div>
@@ -716,23 +497,15 @@ export default function QuellqaAudio() {
               </div>
             </>
           ) : (
-            <>
-              <div className={`w-10 h-10 border ${ui.border} shrink-0 flex items-center justify-center bg-neutral-900`}>
-                <Disc size={16} className="opacity-20" />
-              </div>
-              <span className="text-[9px] font-bold tracking-widest opacity-30 uppercase">No track loaded</span>
-            </>
+            <><div className={`w-10 h-10 border ${ui.border} shrink-0 flex items-center justify-center bg-neutral-900`}><Disc size={16} className="opacity-20" /></div><span className="text-[9px] font-bold tracking-widest opacity-30 uppercase">No track loaded</span></>
           )}
         </div>
 
         <div className="flex items-center gap-1">
           <button onClick={() => currentIdx > 0 && executeTrackSkip(currentIdx - 1)} disabled={currentIdx <= 0} className={`w-8 h-8 border ${ui.border} flex items-center justify-center transition disabled:opacity-10 hover:${ui.accentBorder}`}><SkipBack size={12} /></button>
-          <button onClick={() => { 
-            const activeAudio = activeDeckRef.current === 'A' ? audioARef.current! : audioBRef.current!;
-            if(isPlaying){ activeAudio.pause(); setIsPlaying(false); } else if(activeQueue.length){ activeAudio.play().catch(()=>{}); setIsPlaying(true); } 
-          }} className={`w-10 h-8 border ${ui.border} flex items-center justify-center transition hover:${ui.accentBorder}`}>{isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}</button>
+          <button onClick={() => { const activeAudio = activeDeckRef.current === 'A' ? audioARef.current! : audioBRef.current!; if(isPlaying){ activeAudio.pause(); setIsPlaying(false); } else if(activeQueue.length){ activeAudio.play().catch(()=>{}); setIsPlaying(true); } }} className={`w-10 h-8 border ${ui.border} flex items-center justify-center transition hover:${ui.accentBorder}`}>{isPlaying ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}</button>
           <button onClick={() => currentIdx < activeQueue.length - 1 && executeTrackSkip(currentIdx + 1)} disabled={currentIdx === -1 || currentIdx >= activeQueue.length - 1} className={`w-8 h-8 border ${ui.border} flex items-center justify-center transition disabled:opacity-10 hover:${ui.accentBorder}`}><SkipForward size={12} /></button>
-          <button onClick={() => setIsLooping(!isLooping)} className="w-8 h-8 border flex items-center justify-center transition ml-2" style={{ backgroundColor: isLooping ? ui.primaryHex : 'transparent', color: isLooping ? (currentTheme === 'light' ? '#fff' : '#000') : 'inherit', borderColor: isLooping ? 'transparent' : 'rgba(120,120,120,0.2)' }}><Repeat size={12} /></button>
+          <button onClick={() => setIsLooping(!isLooping)} className="w-8 h-8 border flex items-center justify-center transition ml-2" style={{ backgroundColor: isLooping ? ui.primaryHex : 'transparent', color: isLooping ? '#fff' : 'inherit', borderColor: isLooping ? 'transparent' : 'rgba(120,120,120,0.2)' }}><Repeat size={12} /></button>
         </div>
 
         <div className="w-1/3 flex items-center justify-end gap-3">
