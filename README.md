@@ -1,19 +1,22 @@
-# QUELLQA // V5
+# Quellqa Audio
 
 A desktop audio player engineered for minimal footprint performance. Built with Electron, React, and Tailwind CSS.
 
 ---
 
-![quellqa interface (light)](image.png)
+## Features
+- **Themes:** A Selection of themes with various colors and tones.
+- **Discord Intergration:** Shows your currently playing song on your Discord Profile via RPC.
+- **Parametric EQ:** Fully Customizable EQ with Pre-Amp and Crossfade.
+- **Album Support:** Allows the importing of full albums and displays them in library.
+- **Visualiser:** Shows how loud or quiet sounds are.
 
----
+## Updates
+I am working on an auto-update system, but for now, just check this repo every few days for updates
 
-## DECK CONFIGURATION & FEATURES
+## Bugs / Issues
+If you encounter any Bugs or Issues, please post them on the Issues tab of this repo.
 
-* **Linear Parametric EQ:** Hardware-modeled knobs for cutting/boosting low, mid, and high frequencies.
-* **Master Pre-Amp:** Dedicated hardware ceiling gain multiplier to drive input signals.
-* **Adaptive Visual Engine:** Seamlessly fetches metadata-level cover art with smooth spinning rotation animations.
-* **Dual-State Layout:** Quick toggle between High-Contrast Industrial Black and Sterile Light Mode.
-* **Scrub & Volume Nodes:** Granular position tracking timeline and a primary volume master fader.
-* **Discord Telemetry Engine:** Live profile presence tracking that broadcasts tracks, artists, and albums (can be toggled off directly in configuration panel).
+>[!IMPORTANT]
+>There is currently a bug where the Visualiser does not work properly when the window is Maximised, i am working on a fix for V10.1
 
