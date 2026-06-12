@@ -21,7 +21,7 @@ interface AlbumGroup {
 
 type ThemeName = 'industrial' | 'lean' | 'red' | 'gloop' | 'light';
 
-export default function QuellqaAudio() {
+export default function LarpMedia() {
   const [activeTab, setActiveTab] = useState<'playing' | 'library'>('library');
   const [masterTracks, setMasterTracks] = useState<Track[]>([]);
   const [activeQueue, setActiveQueue] = useState<Track[]>([]);
@@ -108,7 +108,7 @@ export default function QuellqaAudio() {
         ipcRenderer.send('update-rpc', { title: currentTrack.title, artist: currentTrack.artist, album: currentTrack.album, isPlaying });
       } catch(e) {}
     } else {
-      document.title = "Quellqa VERSION X";
+      document.title = "LarpMedia";
       try { window.require('electron').ipcRenderer.send('update-rpc', null); } catch(e) {}
     }
   }, [currentIdx, activeQueue, isPlaying]);
