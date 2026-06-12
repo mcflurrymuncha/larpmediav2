@@ -1,10 +1,10 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import QuellqaAudio from './QuellqaAudio'
+import LarpMedia from './LarpMedia'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QuellqaAudio />
+    <LarpMedia />
   </React.StrictMode>,
 )
