@@ -10,7 +10,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 980,
     height: 620,
-    title: "Quellqa",
+    title: "LarpMedia",
     frame: false,
     resizable: true,
     backgroundColor: '#000000',
@@ -49,7 +49,7 @@ ipcMain.on('sync-native-media', (event, data) => {
 // DISCORD RPC LINK
 const rpc = new DiscordRPC.Client({ transport: 'ipc' });
 function setInitialPresence() {
-  rpc?.setActivity({ details: 'Browsing Music Library', state: 'VERSION X', largeImageKey: 'quellqa_logo', instance: false }).catch(() => {});
+  rpc?.setActivity({ details: 'Browsing Library', state: 'v11.0.0', largeImageKey: 'quellqa_logo', instance: false }).catch(() => {});
 }
 ipcMain.on('update-rpc', (event, track) => {
   if (!rpc) return;
