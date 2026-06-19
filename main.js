@@ -49,12 +49,12 @@ ipcMain.on('sync-native-media', (event, data) => {
 // DISCORD RPC LINK
 const rpc = new DiscordRPC.Client({ transport: 'ipc' });
 function setInitialPresence() {
-  rpc?.setActivity({ details: 'Browsing Library', state: 'v11.0.0', largeImageKey: 'quellqa_logo', instance: false }).catch(() => {});
+  rpc?.setActivity({ details: 'LarpMedia', state: 'v1.0.0', largeImageKey: 'logo', instance: false }).catch(() => {});
 }
 ipcMain.on('update-rpc', (event, track) => {
   if (!rpc) return;
   if (track && track.isPlaying) {
-    rpc.setActivity({ type: 2, details: `${track.title} // ${track.artist}`, state: `${track.album}`, largeImageKey: 'quellqa_logo', instance: false }).catch(() => {});
+    rpc.setActivity({ type: 2, details: `${track.title} // ${track.artist}`, state: `${track.album}`, largeImageKey: 'logo', instance: false }).catch(() => {});
   } else {
     setInitialPresence();
   }
