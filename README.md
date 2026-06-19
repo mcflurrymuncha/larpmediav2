@@ -1,4 +1,4 @@
-# Quellqa Audio
+# Larpmedia
 
 A desktop audio player engineered for minimal footprint performance. Built with Electron, React, and Tailwind CSS.
 
@@ -22,5 +22,5 @@ I am working on an auto-update system, but for now, just check this repo every f
 If you encounter any Bugs or Issues, please post them on the Issues tab of this repo.
 
 >[!IMPORTANT]
->There is currently a bug where the Visualiser does not work properly when the window is Maximised, i am working on a fix for V10.1
+>There is currently a bug where the Visualiser does not work properly when the window is Maximised, i am working on a fix.
 
